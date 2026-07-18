@@ -163,7 +163,10 @@ static vv_Command *push_cmd(vv_Ctx *ctx) {
     vv_CommandBuffer *cb = &ctx->cmds;
     if (cb->count == cb->cap) {
         uint32_t ncap = cb->cap ? cb->cap * 2 : 256;
-        vv_Command *ni = vv_arena_alloc(&ctx->frame, sizeof(vv_Command) * ncap);
+        // Commands live in the present arena (reset every frame), not the frame
+        // arena — so idle/present-only frames re-emit without growing memory and
+        // without disturbing node text that must survive between rebuilds.
+        vv_Command *ni = vv_arena_alloc(&ctx->present, sizeof(vv_Command) * ncap);
         if (cb->count) memcpy(ni, cb->items, sizeof(vv_Command) * cb->count);
         cb->items = ni; cb->cap = ncap;
     }

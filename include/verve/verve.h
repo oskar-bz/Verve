@@ -10,6 +10,7 @@
 #include "vv_color.h"    // IWYU pragma: export
 #include "vv_command.h"  // IWYU pragma: export
 #include "vv_context.h"  // IWYU pragma: export
+#include "vv_event.h"    // IWYU pragma: export
 #include "vv_id.h"       // IWYU pragma: export
 #include "vv_internal.h" // IWYU pragma: export
 #include "vv_layout.h"   // IWYU pragma: export

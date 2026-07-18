@@ -43,6 +43,15 @@ const vv_Theme *vv_theme(void) {
   return &g_theme;
 }
 
+// Emit the optional hover/press/double-click bindings for a just-built node.
+// Payloads for these auxiliary interactions default to none; encode context in
+// the message id if needed. The primary action is emitted by each widget.
+static void emit_aux(vv_Ctx *ctx, uint32_t id, vv_On on) {
+  if (on.hover && vv_hovered(ctx, id)) vv_emit(ctx, on.hover, VV_NO_PAYLOAD);
+  if (on.press && vv_pressed(ctx, id)) vv_emit(ctx, on.press, VV_NO_PAYLOAD);
+  if (on.dbl && vv_double_clicked(ctx, id)) vv_emit(ctx, on.dbl, VV_NO_PAYLOAD);
+}
+
 // ---- label ---------------------------------------------------------------
 
 void vv_label(vv_Ctx *ctx, const char *text) {
@@ -60,7 +69,8 @@ void vv_label_muted(vv_Ctx *ctx, const char *text) {
 
 // ---- button --------------------------------------------------------------
 
-bool vv_button(vv_Ctx *ctx, const char *key, const char *label) {
+uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
+                      vv_Msg click, vv_Payload arg, vv_On on) {
   const vv_Theme *t = vv_theme();
   // Variants are consumed at build time (§7.1), so these locals are fine.
   vv_Style hover = {.bg = t->accent_hi};
@@ -77,13 +87,20 @@ bool vv_button(vv_Ctx *ctx, const char *key, const char *label) {
           (vv_Style){
               .fg = t->on_accent, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
-  return vv_clicked(ctx, id);
+  if (vv_clicked(ctx, id)) vv_emit(ctx, click, arg);
+  emit_aux(ctx, id, on);
+  return id;
+}
+
+uint32_t vv_button(vv_Ctx *ctx, const char *key, const char *label,
+                   vv_Msg click, vv_Payload arg) {
+  return vv_button_on(ctx, key, label, click, arg, (vv_On){0});
 }
 
 // ---- toggle --------------------------------------------------------------
 // The knob's x jumps between two positions; the FLIP spring slides it (§14.3).
 
-bool vv_toggle(vv_Ctx *ctx, const char *key, bool value) {
+uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
   uint32_t id = vv_box_keyed(
       ctx, key, key ? strlen(key) : 0,
@@ -97,14 +114,15 @@ bool vv_toggle(vv_Ctx *ctx, const char *key, bool value) {
                VV_STYLE(.bg = t->knob, .radius = vv_r(10)));
   vv_end_box(ctx);
   vv_end_box(ctx);
-  return vv_clicked(ctx, id) ? !value : value;
+  if (vv_clicked(ctx, id)) vv_emit(ctx, change, vv_pi(!value));
+  return id;
 }
 
 // ---- checkbox ------------------------------------------------------------
 
-bool vv_checkbox(vv_Ctx *ctx, const char *key, const char *label, bool value) {
+uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,
+                     bool value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  bool nv = value;
   uint32_t row = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                               (vv_LayoutDecl){.dir = VV_ROW,
                                               .gap = 10,
@@ -134,9 +152,8 @@ bool vv_checkbox(vv_Ctx *ctx, const char *key, const char *label, bool value) {
     vv_label(ctx, label);
   }
   vv_end_box(ctx);
-  if (vv_clicked(ctx, row))
-    nv = !value;
-  return nv;
+  if (vv_clicked(ctx, row)) vv_emit(ctx, change, vv_pi(!value));
+  return row;
 }
 
 // ---- slider --------------------------------------------------------------
@@ -145,8 +162,8 @@ typedef struct {
   bool dragging;
 } SliderState;
 
-float vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
-                float max) {
+uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
+                   float max, vv_Msg change) {
   const vv_Theme *t = vv_theme();
   float range = max - min;
   float norm = range != 0.0f ? (value - min) / range : 0.0f;
@@ -205,7 +222,8 @@ float vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
     vv_end_box(ctx);
   }
   vv_end_box(ctx);
-  return out;
+  if (out != value) vv_emit(ctx, change, vv_pf(out));
+  return track;
 }
 
 // ---- drag_number ---------------------------------------------------------
@@ -217,8 +235,8 @@ typedef struct {
   bool active;
 } DragState;
 
-float vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
-                     float min, float max) {
+uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
+                        float min, float max, vv_Msg change) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
   uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
@@ -254,7 +272,8 @@ float vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
       ctx, buf,
       (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
-  return out;
+  if (out != value) vv_emit(ctx, change, vv_pf(out));
+  return id;
 }
 
 // ---- text field ----------------------------------------------------------
@@ -406,8 +425,8 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   return changed;
 }
 
-bool vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
-                   const char *placeholder) {
+uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
+                       const char *placeholder, vv_Msg change) {
   const vv_Theme *t = vv_theme();
   int len = (int)strlen(buf);
   float size = t->font_size;
@@ -502,13 +521,14 @@ bool vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
   }
 
   vv_end_box(ctx);
-  return changed;
+  if (changed) vv_emit(ctx, change, vv_ps(buf));
+  return id;
 }
 
 // ---- list item -----------------------------------------------------------
 
-bool vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
-                  bool selected) {
+uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
+                      bool selected, vv_Msg click, vv_Payload arg) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
   uint32_t id =
@@ -527,5 +547,6 @@ bool vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                      .font_size = t->font_size,
                      .font = t->font});
   vv_end_box(ctx);
-  return vv_clicked(ctx, id);
+  if (vv_clicked(ctx, id)) vv_emit(ctx, click, arg);
+  return id;
 }

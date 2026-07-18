@@ -24,22 +24,42 @@ vv_Theme       vv_theme_dark(void);   // sensible default palette
 void           vv_set_theme(const vv_Theme *t);
 const vv_Theme *vv_theme(void);
 
-// Primitives / interactive (§14.5). `key` gives stable identity in loops and
-// conditionals; pass NULL to rely on sequence.
-bool  vv_button(vv_Ctx *ctx, const char *key, const char *label);
-bool  vv_toggle(vv_Ctx *ctx, const char *key, bool value);            // returns new value
-bool  vv_checkbox(vv_Ctx *ctx, const char *key, const char *label, bool value);
-float vv_slider(vv_Ctx *ctx, const char *key, float value, float min, float max);
-float vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
-                     float min, float max);
-// A selectable list row; returns true if clicked this frame.
-bool  vv_list_item(vv_Ctx *ctx, const char *key, const char *label, bool selected);
+// Primitives / interactive (§14.5). Widgets are emit-only: rather than return
+// an interaction value, they push a message + payload into the context queue
+// when their action fires, and return their node handle (for vv_state or extra
+// queries). `key` gives stable identity in loops/conditionals; NULL => sequence.
+//
+// The primary action is a direct `on_*` message parameter; the `_on` variants
+// take an optional vv_On for hover/press/double-click bindings. Controlled
+// widgets (checkbox, toggle, slider) take the *current* value to render and
+// emit the *new* value in the payload — update() writes it back to state.
+
+// Emits `click` (payload `arg`) when pressed and released inside.
+uint32_t vv_button(vv_Ctx *ctx, const char *key, const char *label,
+                   vv_Msg click, vv_Payload arg);
+uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
+                      vv_Msg click, vv_Payload arg, vv_On on);
+
+// Emit `change` with `.as_int = !value` when clicked.
+uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change);
+uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,
+                     bool value, vv_Msg change);
+
+// Emit `change` with `.as_float = new_value` while dragged.
+uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
+                   float max, vv_Msg change);
+uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
+                        float min, float max, vv_Msg change);
+
+// A selectable list row; emits `click` (payload `arg`) when clicked.
+uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
+                      bool selected, vv_Msg click, vv_Payload arg);
 
 // Single-line editable text field. Edits `buf` (NUL-terminated, capacity `cap`)
-// in place; returns true on any change this frame. Animated caret; supports
-// arrow/home/end nav, selection with shift, and clipboard via the backend.
-bool  vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
-                    const char *placeholder);
+// in place and, on any change this frame, emits `change` with `.as_str = buf`.
+// Animated caret; arrow/home/end nav, shift-selection, clipboard via backend.
+uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
+                       const char *placeholder, vv_Msg change);
 
 // Labelled helpers.
 void  vv_label(vv_Ctx *ctx, const char *text);

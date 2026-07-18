@@ -14,7 +14,8 @@
 void vv_init(vv_Ctx *ctx) {
     memset(ctx, 0, sizeof(*ctx));
     vv_arena_init(&ctx->persistent, 1 << 20); // 1 MiB starter block
-    vv_arena_init(&ctx->frame, 1 << 18);      // 256 KiB, reset each frame
+    vv_arena_init(&ctx->frame, 1 << 18);      // 256 KiB, reset on build frames
+    vv_arena_init(&ctx->present, 1 << 18);    // 256 KiB, reset every frame
     vv_pool_init(&ctx->pool, &ctx->persistent, 256);
 
     ctx->animation_scale = 1.0f;
@@ -30,6 +31,7 @@ void vv_init(vv_Ctx *ctx) {
 void vv_shutdown(vv_Ctx *ctx) {
     vv_arena_destroy(&ctx->persistent);
     vv_arena_destroy(&ctx->frame);
+    vv_arena_destroy(&ctx->present);
     memset(ctx, 0, sizeof(*ctx));
 }
 
@@ -250,19 +252,44 @@ static void reconcile(vv_Ctx *ctx) {
 
 // ---- frame ---------------------------------------------------------------
 
-void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
+// Whether this frame's input could change the tree, so a rebuild is warranted
+// (the idle gate, §4.2). Movement is included so hover variants/hover events
+// react; a held capture keeps building so drags track. Pure-idle frames (no
+// movement, no buttons/keys) fall through to present-only.
+static bool input_is_interactive(vv_Ctx *ctx) {
+    const vv_Input *in = &ctx->input;
+    bool moved = in->mouse.x != ctx->mouse_prev.x || in->mouse.y != ctx->mouse_prev.y;
+    return moved || in->mouse_down || ctx->mouse_prev_down ||
+           in->wheel != 0.0f || in->key_count > 0 || in->text_len > 0 ||
+           ctx->active_id != 0;
+}
+
+// Step 1: consume input and prepare a fresh command buffer. Does NOT reset the
+// frame arena or the tree — so a present-only frame can follow without losing
+// the last build's node text (which lives in the frame arena).
+static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
     ctx->frame_index++;
     ctx->dt = dt;
+    ctx->clock += dt;
     if (input) ctx->input = *input;
 
-    vv_arena_reset(&ctx->frame);
+    vv_arena_reset(&ctx->present);
     ctx->cmds = (vv_CommandBuffer){0};
     ctx->unsettled_springs = 0;
 
+    ctx->wants_build = input_is_interactive(ctx) || ctx->tree_dirty ||
+                       ctx->frame_index == 1;
+
     // Resolve input against last frame's geometry before build code queries it.
     vv_input_process(ctx);
+}
 
-    // Reset the root as this frame's build container.
+// Step 2: reset the root and build stack so view code can populate the tree.
+// Resets the frame arena — the previous build's text/scratch is dead once we
+// rebuild.
+static void build_begin(vv_Ctx *ctx) {
+    vv_arena_reset(&ctx->frame);
+
     vv_Node *root = vv_pool_get(&ctx->pool, ctx->root);
     root->first_child = root->last_child = VV_NIL;
     root->child_count = 0;
@@ -274,6 +301,11 @@ void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
     ctx->stack[0]       = ctx->root;
     ctx->seq_counter[0] = 0;
     ctx->in_build       = true;
+}
+
+void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
+    input_step(ctx, dt, input);
+    build_begin(ctx);
 }
 
 vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
@@ -290,4 +322,57 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
     ctx->tree_dirty = false;
     ctx->last_tier  = VV_TIER_BUILD;
     return &ctx->cmds;
+}
+
+// Present-only frame: no build, no reconcile, no layout — just advance springs
+// and re-emit the existing tree. Used when nothing changed but animations are
+// still running (§4.2). The frame arena is untouched, so node text stays valid.
+static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
+    vv_present(ctx);
+    ctx->last_tier = VV_TIER_PRESENT;
+    return &ctx->cmds;
+}
+
+vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
+                               vv_UpdateFn update, vv_ViewFn view, void *state) {
+    input_step(ctx, dt, input);
+
+    // Drain messages emitted by the previous view() into the app's update().
+    bool changed = false;
+    if (update) {
+        vv_Event ev;
+        while (vv_poll_event(ctx, &ev)) { update(state, ev); changed = true; }
+    }
+
+    // Rebuild when state changed or this frame's input could emit a message;
+    // otherwise present-only to keep animations advancing. (One-frame pipeline:
+    // messages from this build are processed next frame. To switch to a settle
+    // loop, this is the single place that would loop view()+drain until quiet.)
+    if (changed || ctx->wants_build) {
+        build_begin(ctx);
+        if (view) view(ctx, state);
+        return vv_end_frame(ctx);
+    }
+    return present_only(ctx);
+}
+
+// ---- message queue --------------------------------------------------------
+
+void vv_emit(vv_Ctx *ctx, vv_Msg msg, vv_Payload data) {
+    if (msg == VV_MSG_NONE) return;
+    if (ctx->event_count >= VV_EVENT_CAP) {
+        assert(0 && "event queue overflow — draining too slowly");
+        return; // drop rather than clobber unread events
+    }
+    uint32_t slot = (ctx->event_head + ctx->event_count) % VV_EVENT_CAP;
+    ctx->events[slot] = (vv_Event){ .msg = msg, .data = data };
+    ctx->event_count++;
+}
+
+bool vv_poll_event(vv_Ctx *ctx, vv_Event *out) {
+    if (ctx->event_count == 0) return false;
+    if (out) *out = ctx->events[ctx->event_head];
+    ctx->event_head = (ctx->event_head + 1) % VV_EVENT_CAP;
+    ctx->event_count--;
+    return true;
 }

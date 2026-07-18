@@ -10,7 +10,7 @@ static void frame(vv_Ctx *ctx, vv_Input in) {
     vv_begin_frame(ctx, 0.016f, &in);
     VV_BOX(ctx, ((vv_LayoutDecl){ .dir = VV_COLUMN, .padding = vv_all(10),
                                   .w = vv_fixed(300) }), (vv_Style){0}) {
-        vv_text_field(ctx, "f", buf, sizeof buf, "type...");
+        vv_text_field(ctx, "f", buf, sizeof buf, "type...", VV_MSG_NONE);
     }
     vv_end_frame(ctx);
 }

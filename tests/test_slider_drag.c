@@ -5,21 +5,27 @@
 // Reproduce: press on a slider track and drag; the returned value must track
 // the pointer x. If it stays put, active/geometry routing is broken.
 
+#define MSG_SLIDE 1
+
 static float build(vv_Ctx *ctx, float v, vv_Vec2 mouse, bool down, uint32_t *out_track) {
     vv_Input in = { .mouse = mouse, .mouse_down = down };
     vv_begin_frame(ctx, 0.016f, &in);
-    float out = v;
     // FIT column + FIT row: the pathological container that used to collapse
     // the track to width 0 (label + slider in a bare row, as in the demo).
     VV_BOX(ctx, ((vv_LayoutDecl){ .dir = VV_COLUMN, .padding = vv_all(10) }),
            (vv_Style){0}) {
         VV_BOX(ctx, ((vv_LayoutDecl){ .dir = VV_ROW, .gap = 10 }), (vv_Style){0}) {
             vv_label(ctx, "Duration:");
-            out = vv_slider(ctx, "s", v, 0, 1);
+            vv_slider(ctx, "s", v, 0, 1, MSG_SLIDE);
         }
     }
     vv_end_frame(ctx);
     (void)out_track;
+    // The slider emits the new value on change; otherwise the value is unchanged.
+    float out = v;
+    vv_Event ev;
+    while (vv_poll_event(ctx, &ev))
+        if (ev.msg == MSG_SLIDE) out = (float)ev.data.as_float;
     return out;
 }
 

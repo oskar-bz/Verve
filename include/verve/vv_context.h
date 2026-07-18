@@ -7,6 +7,7 @@
 
 #include "vv_arena.h"
 #include "vv_command.h"
+#include "vv_event.h"
 #include "vv_id.h"
 #include "vv_node.h"
 #include "vv_str.h"
@@ -43,9 +44,12 @@ typedef enum { VV_TIER_IDLE, VV_TIER_PRESENT, VV_TIER_BUILD } vv_FrameTier;
 
 #define VV_BUILD_STACK_MAX 256
 
+#define VV_EVENT_CAP 256
+
 typedef struct vv_Ctx {
     vv_Arena    persistent;
-    vv_Arena    frame;
+    vv_Arena    frame;    // build scratch + node text; reset only on build frames
+    vv_Arena    present;  // command-buffer items; reset every frame
     vv_NodePool pool;
 
     uint64_t frame_index;
@@ -74,10 +78,22 @@ typedef struct vv_Ctx {
     vv_ID   focused_id;    // keyboard target (§11.1)
     vv_ID   pressed_id;    // went down this frame
     vv_ID   clicked_id;    // down+up both inside this frame
+    vv_ID   double_clicked_id; // second click within the double-click window
     bool    mouse_prev_down;
+    vv_Vec2 mouse_prev;   // last frame's pointer, to detect movement (idle gate)
     vv_Vec2 drag_start;
     vv_Vec2 drag_delta;
     bool    focus_next;   // autofocus the next focusable node built
+
+    // Message queue (§ message-driven UI). Emitted during view(), drained by the
+    // driver into update() next frame. A fixed ring; survives the frame reset.
+    vv_Event events[VV_EVENT_CAP];
+    uint32_t event_head, event_count;
+
+    float    clock;       // seconds accumulated from dt, for click timing
+    float    last_click_time;
+    vv_ID    last_click_id;
+    bool     wants_build; // this frame's input can change the tree (idle gate)
 
     // Build-time stack.
     uint32_t stack[VV_BUILD_STACK_MAX];
@@ -104,6 +120,23 @@ void vv_invalidate(vv_Ctx *ctx);
 
 void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input);
 vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx);
+
+// ---- message loop (§ message-driven UI) ----------------------------------
+// The blessed path. Widgets built in `view` emit messages; this driver drains
+// last frame's messages into `update`, then rebuilds `view` only if a message
+// was processed or this frame's input could produce one — otherwise it just
+// presents (advancing animations). One rebuild per frame (one-frame pipeline);
+// the policy lives entirely here so it can later become a settle loop without
+// touching application code. Returns the command buffer to hand to the backend.
+typedef void (*vv_UpdateFn)(void *state, vv_Event ev);
+typedef void (*vv_ViewFn)(vv_Ctx *ctx, void *state);
+
+vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
+                               vv_UpdateFn update, vv_ViewFn view, void *state);
+
+// Low-level queue access, for apps that drive their own loop.
+void vv_emit(vv_Ctx *ctx, vv_Msg msg, vv_Payload data);
+bool vv_poll_event(vv_Ctx *ctx, vv_Event *out); // FIFO; false when empty
 
 // ---- tree building -------------------------------------------------------
 
@@ -157,6 +190,7 @@ bool    vv_pressed(vv_Ctx *ctx, uint32_t index);  // went down this frame
 bool    vv_clicked(vv_Ctx *ctx, uint32_t index);  // down+up both inside
 bool    vv_active(vv_Ctx *ctx, uint32_t index);   // held with capture
 bool    vv_focused(vv_Ctx *ctx, uint32_t index);
+bool    vv_double_clicked(vv_Ctx *ctx, uint32_t index);
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 // Focus the next focusable node built this frame (autofocus a field on open).

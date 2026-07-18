@@ -101,6 +101,7 @@ void vv_input_process(vv_Ctx *ctx) {
 
     ctx->clicked_id = 0;
     ctx->pressed_id = 0;
+    ctx->double_clicked_id = 0;
 
     // 1) Hover: fresh hit test against last frame's geometry. While a node is
     // captured (active), it keeps the pointer regardless of position (§11.2).
@@ -130,10 +131,21 @@ void vv_input_process(vv_Ctx *ctx) {
         ctx->drag_delta = vv_v2(m.x - ctx->drag_start.x, m.y - ctx->drag_start.y);
     }
 
-    // 4) Release edge: click iff release lands on the captured node.
+    // 4) Release edge: click iff release lands on the captured node. A second
+    // click on the same node within the window is a double-click (§11).
     if (!down && was) {
-        if (ctx->active_id && hit_target(ctx, m) == ctx->active_id)
+        if (ctx->active_id && hit_target(ctx, m) == ctx->active_id) {
             ctx->clicked_id = ctx->active_id;
+            const float VV_DOUBLE_CLICK_S = 0.35f;
+            if (ctx->last_click_id == ctx->clicked_id &&
+                ctx->clock - ctx->last_click_time <= VV_DOUBLE_CLICK_S) {
+                ctx->double_clicked_id = ctx->clicked_id;
+                ctx->last_click_id = 0; // consume, so a triple isn't two doubles
+            } else {
+                ctx->last_click_id = ctx->clicked_id;
+                ctx->last_click_time = ctx->clock;
+            }
+        }
         ctx->active_id = 0;
     }
 
@@ -158,6 +170,7 @@ void vv_input_process(vv_Ctx *ctx) {
     }
 
     ctx->mouse_prev_down = down;
+    ctx->mouse_prev      = m;
 }
 
 // ---- queries --------------------------------------------------------------
@@ -172,6 +185,7 @@ bool vv_pressed(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->
 bool vv_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->clicked_id && ctx->clicked_id; }
 bool vv_active(vv_Ctx *ctx, uint32_t index)  { return id_of(ctx, index) == ctx->active_id  && ctx->active_id; }
 bool vv_focused(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->focused_id && ctx->focused_id; }
+bool vv_double_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->double_clicked_id && ctx->double_clicked_id; }
 
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index) {
     return vv_active(ctx, index) ? ctx->drag_delta : vv_v2(0, 0);
