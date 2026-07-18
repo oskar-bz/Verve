@@ -378,8 +378,6 @@ uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v) {
 
 typedef struct {
   int cursor, anchor; // byte offsets into buf
-  vv_Spring caret_x;  // animated caret position (px from text origin)
-  bool init;
 } TextFieldState;
 
 static float measure_prefix(vv_Ctx *ctx, const char *buf, int n, float size) {
@@ -572,14 +570,11 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
   if (s->anchor > len)
     s->anchor = len;
 
-  // Animated caret position.
+  // Caret target position. The glide is the caret node's own FLIP spring, driven
+  // by present every frame while unsettled — NOT a build-stepped spring, which
+  // would freeze between rebuilds now that builds are gated (§4.2) and leave the
+  // caret parked at a partial position.
   float cx = measure_prefix(ctx, buf, s->cursor, size);
-  if (!s->init) {
-    vv_spring_init(&s->caret_x, cx, VV_SNAPPY);
-    s->init = true;
-  }
-  vv_spring_retarget(&s->caret_x, cx);
-  vv_spring_step(&s->caret_x, ctx->dt);
 
   // Selection highlight (behind text).
   if (focused && has_sel(s)) {
@@ -609,7 +604,7 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
                  (vv_LayoutDecl){.w = vv_fixed(2),
                                  .h = vv_fixed(20),
                                  .has_absolute = true,
-                                 .absolute = vv_rect(s->caret_x.x, 7, 2, 20)},
+                                 .absolute = vv_rect(cx, 7, 2, 20)},
                  (vv_Style){.bg = t->accent, .radius = vv_r(1)});
     vv_end_box(ctx);
   }
