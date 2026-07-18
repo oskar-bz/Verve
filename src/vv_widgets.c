@@ -44,13 +44,17 @@ const vv_Theme *vv_theme(void) {
   return &g_theme;
 }
 
-// Emit the optional hover/press/double-click bindings for a just-built node.
-// Payloads for these auxiliary interactions default to none; encode context in
-// the message id if needed. The primary action is emitted by each widget.
-static void emit_aux(vv_Ctx *ctx, uint32_t id, vv_On on) {
+// Bind auxiliary interactions on a just-built node. hover/press/double-click
+// fire immediately from this frame's interaction flags; `move` is recorded on
+// the node so the next input step can emit it while hovered (it can't be known
+// here — motion is detected before the build). Payloads for these default to
+// none, except move which carries the cursor. Usable on any box, not just the
+// _on widget variants.
+void vv_on(vv_Ctx *ctx, uint32_t id, vv_On on) {
   if (on.hover && vv_hovered(ctx, id)) vv_emit(ctx, on.hover, VV_NO_PAYLOAD);
   if (on.press && vv_pressed(ctx, id)) vv_emit(ctx, on.press, VV_NO_PAYLOAD);
   if (on.dbl && vv_double_clicked(ctx, id)) vv_emit(ctx, on.dbl, VV_NO_PAYLOAD);
+  vv_node(ctx, id)->on_move = on.move;
 }
 
 // ---- label ---------------------------------------------------------------
@@ -89,7 +93,7 @@ uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
               .fg = t->on_accent, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
   if (vv_clicked(ctx, id)) vv_emit(ctx, click, arg);
-  emit_aux(ctx, id, on);
+  vv_on(ctx, id, on);
   return id;
 }
 

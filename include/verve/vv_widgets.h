@@ -41,6 +41,12 @@ uint32_t vv_button(vv_Ctx *ctx, const char *key, const char *label,
 uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
                       vv_Msg click, vv_Payload arg, vv_On on);
 
+// Bind hover/press/double-click/move interactions to messages on any node
+// (typically a plain vv_box). hover/press/dbl fire this frame; `move` emits the
+// cursor position while the node is hovered and is the opt-in that makes a
+// cursor-driven view rebuild on motion. Call right after building the box.
+void vv_on(vv_Ctx *ctx, uint32_t id, vv_On on);
+
 // Emit `change` with `.as_int = !value` when clicked.
 uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change);
 uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,

@@ -16,8 +16,10 @@
 #ifndef VV_EVENT_H
 #define VV_EVENT_H
 
+#include "vv_types.h"
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 typedef uint64_t vv_Msg;
 #define VV_MSG_NONE ((vv_Msg)0)
@@ -42,6 +44,22 @@ static inline vv_Payload vv_pp(void *v)       { return (vv_Payload){ .as_ptr = v
 static inline vv_Payload vv_ps(const char *v) { return (vv_Payload){ .as_str = v }; }
 #define VV_NO_PAYLOAD ((vv_Payload){ 0 })
 
+// A 2D point packs into the 64-bit payload (two float32s), so a move/click event
+// carries the cursor position by value — no allocation, no lifetime worry.
+static inline vv_Payload vv_pv2(vv_Vec2 v) {
+    uint32_t x, y;
+    memcpy(&x, &v.x, sizeof x);
+    memcpy(&y, &v.y, sizeof y);
+    return (vv_Payload){ .as_int = (int64_t)(((uint64_t)x << 32) | y) };
+}
+static inline vv_Vec2 vv_as_v2(vv_Payload p) {
+    uint32_t x = (uint32_t)((uint64_t)p.as_int >> 32), y = (uint32_t)p.as_int;
+    vv_Vec2 v;
+    memcpy(&v.x, &x, sizeof v.x);
+    memcpy(&v.y, &y, sizeof v.y);
+    return v;
+}
+
 typedef struct {
     vv_Msg     msg;
     vv_Payload data;
@@ -54,6 +72,9 @@ typedef struct {
     vv_Msg hover; // pointer entered the widget this frame
     vv_Msg press; // pressed down on the widget this frame
     vv_Msg dbl;   // double-clicked this frame
+    vv_Msg move;  // pointer moved while over the widget (payload = cursor pos).
+                  // Only a widget that sets this rebuilds on plain motion; the
+                  // event carries vv_pv2(mouse), read back with vv_as_v2.
 } vv_On;
 
 #endif // VV_EVENT_H

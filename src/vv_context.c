@@ -126,6 +126,7 @@ static uint32_t open_node(vv_Ctx *ctx, const char *key, size_t klen,
     n->first_child = n->last_child = VV_NIL;
     n->next_sibling = VV_NIL;
     n->child_count  = 0;
+    n->on_move      = VV_MSG_NONE; // re-subscribed each build via vv_on()
 
     // Append to parent's freshly-reset child list.
     if (parent->first_child == VV_NIL) {
@@ -282,15 +283,33 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
     vv_ID   prev_hover = ctx->hovered_id;
     vv_ID   prev_focus = ctx->focused_id;
     bool    down_edge  = ctx->input.mouse_down != ctx->mouse_prev_down;
+    bool    moved      = ctx->input.mouse.x != ctx->mouse_prev.x ||
+                         ctx->input.mouse.y != ctx->mouse_prev.y;
 
     // Resolve input against last frame's geometry before build code queries it.
     vv_input_process(ctx);
 
+    // Pointer-move subscription (opt-in, §4.2): if the hovered node asked for
+    // move events (vv_On.move, recorded last build), a motion emits it with the
+    // cursor position. Processed this same frame, so cursor-driven views update
+    // without a global per-frame rebuild.
+    bool moved_sub = false;
+    if (moved && ctx->hovered_id) {
+        uint32_t hidx = vv_pool_find(&ctx->pool, ctx->hovered_id);
+        if (hidx != VV_NIL) {
+            vv_Msg mm = ctx->pool.nodes[hidx].on_move;
+            if (mm != VV_MSG_NONE) {
+                vv_emit(ctx, mm, vv_pv2(ctx->input.mouse));
+                moved_sub = true;
+            }
+        }
+    }
+
     ctx->wants_build =
         ctx->hovered_id != prev_hover || ctx->focused_id != prev_focus ||
-        down_edge || ctx->active_id != 0 || ctx->input.wheel != 0.0f ||
-        ctx->input.key_count > 0 || ctx->input.text_len > 0 ||
-        ctx->tree_dirty || ctx->frame_index == 1;
+        down_edge || moved_sub || ctx->active_id != 0 ||
+        ctx->input.wheel != 0.0f || ctx->input.key_count > 0 ||
+        ctx->input.text_len > 0 || ctx->tree_dirty || ctx->frame_index == 1;
 }
 
 // Step 2: reset the root and build stack so view code can populate the tree.

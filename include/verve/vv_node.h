@@ -7,6 +7,7 @@
 #define VV_NODE_H
 
 #include "vv_arena.h"
+#include "vv_event.h"
 #include "vv_layout.h"
 #include "vv_style.h"
 
@@ -43,6 +44,12 @@ typedef struct vv_Node {
 
     vv_Spring enter, exit;        // 0->1 lifecycle springs
     uint32_t  flags;
+
+    // Set during build if this node subscribed to pointer-move (vv_On.move).
+    // Read next frame's input step: while hovered, a move emits this message
+    // (carrying the cursor) and forces a rebuild — the opt-in for cursor-driven
+    // views that the plain hover-change gate skips. Cleared each build.
+    vv_Msg    on_move;
 
     void    *widget_state;
     uint32_t widget_state_size;
