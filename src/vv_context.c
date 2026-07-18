@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -190,6 +191,14 @@ void vv_rows(vv_Ctx *ctx, int count, float row_h,
                (vv_Style){0});
         vv_end_box(ctx);
     }
+}
+
+vv_Str vv_fmt(vv_Ctx *ctx, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vv_Str s = vv_str_vformat(&ctx->frame, fmt, ap);
+    va_end(ap);
+    return s;
 }
 
 uint32_t vv_text_keyed(vv_Ctx *ctx, const char *key, size_t klen,

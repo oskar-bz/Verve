@@ -9,6 +9,7 @@
 #include "vv_command.h"
 #include "vv_id.h"
 #include "vv_node.h"
+#include "vv_str.h"
 
 // Editing/navigation keys routed to the focused node (§11.3). Printable text
 // arrives separately as UTF-8 in vv_Input.text.
@@ -169,5 +170,15 @@ void   *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size);
 
 // Current pointer position (screen space), for widgets doing their own math.
 static inline vv_Vec2 vv_mouse(vv_Ctx *ctx) { return ctx->input.mouse; }
+
+// Format a string into the frame arena for immediate use in build code:
+//   vv_label(c, vv_fmt(c, "%.1f s", elapsed));
+// The result lives until the next frame — long enough for the text widget to
+// copy it — so no scratch buffer and no snprintf sizing at the call site.
+vv_Str vv_fmt(vv_Ctx *ctx, const char *fmt, ...)
+#if defined(__GNUC__) || defined(__clang__)
+    __attribute__((format(printf, 2, 3)))
+#endif
+    ;
 
 #endif // VV_CONTEXT_H
