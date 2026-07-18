@@ -384,6 +384,7 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     a->gl = SDL_GL_CreateContext(a->win);
     SDL_GL_MakeCurrent(a->win, a->gl);
     SDL_GL_SetSwapInterval(1);
+    SDL_StartTextInput(a->win);   // deliver SDL_EVENT_TEXT_INPUT
 
     a->rect_prog = link_prog(RECT_VS, RECT_FS);
     a->text_prog = link_prog(TEXT_VS, TEXT_FS);
@@ -428,10 +429,39 @@ void vv_app_size(vv_App *a, int *w, int *h, float *dpi) {
     if (dpi) *dpi = a->dpi;
 }
 
+static vv_Key map_key(SDL_Keycode k) {
+    switch (k) {
+        case SDLK_LEFT:      return VV_KEY_LEFT;
+        case SDLK_RIGHT:     return VV_KEY_RIGHT;
+        case SDLK_UP:        return VV_KEY_UP;
+        case SDLK_DOWN:      return VV_KEY_DOWN;
+        case SDLK_HOME:      return VV_KEY_HOME;
+        case SDLK_END:       return VV_KEY_END;
+        case SDLK_BACKSPACE: return VV_KEY_BACKSPACE;
+        case SDLK_DELETE:    return VV_KEY_DELETE;
+        case SDLK_RETURN:    return VV_KEY_ENTER;
+        case SDLK_TAB:       return VV_KEY_TAB;
+        case SDLK_ESCAPE:    return VV_KEY_ESCAPE;
+        case SDLK_A:         return VV_KEY_A;
+        case SDLK_C:         return VV_KEY_C;
+        case SDLK_V:         return VV_KEY_V;
+        case SDLK_X:         return VV_KEY_X;
+        case SDLK_Z:         return VV_KEY_Z;
+        default:             return VV_KEY_NONE;
+    }
+}
+
 bool vv_app_pump(vv_App *a, vv_Input *in) {
     (void)a; // single-window: SDL events aren't window-filtered yet
     SDL_Event e;
     in->wheel = 0;
+    in->text_len = 0; in->text[0] = 0;
+    in->key_count = 0;
+    SDL_Keymod mod = SDL_GetModState();
+    in->shift = (mod & SDL_KMOD_SHIFT) != 0;
+    in->ctrl  = (mod & SDL_KMOD_CTRL) != 0;
+    in->alt   = (mod & SDL_KMOD_ALT) != 0;
+
     while (SDL_PollEvent(&e)) {
         switch (e.type) {
             case SDL_EVENT_QUIT: return false;
@@ -443,8 +473,21 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
                 if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false; break;
             case SDL_EVENT_MOUSE_WHEEL:
                 in->wheel += e.wheel.y; break;
-            case SDL_EVENT_KEY_DOWN:
-                if (e.key.key == SDLK_ESCAPE) return false; break;
+            case SDL_EVENT_TEXT_INPUT: {
+                for (const char *p = e.text.text; *p && in->text_len < VV_INPUT_TEXT_CAP - 1; p++)
+                    in->text[in->text_len++] = *p;
+                in->text[in->text_len] = 0;
+                break;
+            }
+            case SDL_EVENT_KEY_DOWN: {
+                vv_Key k = map_key(e.key.key);
+                if (k != VV_KEY_NONE && in->key_count < VV_INPUT_KEY_CAP) {
+                    bool sh = (e.key.mod & SDL_KMOD_SHIFT) != 0;
+                    bool ct = (e.key.mod & SDL_KMOD_CTRL) != 0;
+                    in->keys[in->key_count++] = (vv_KeyEvent){ (uint16_t)k, sh, ct };
+                }
+                break;
+            }
         }
     }
     return true;

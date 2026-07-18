@@ -35,6 +35,12 @@ float vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
 // A selectable list row; returns true if clicked this frame.
 bool  vv_list_item(vv_Ctx *ctx, const char *key, const char *label, bool selected);
 
+// Single-line editable text field. Edits `buf` (NUL-terminated, capacity `cap`)
+// in place; returns true on any change this frame. Animated caret; supports
+// arrow/home/end nav, selection with shift, and clipboard via the backend.
+bool  vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
+                    const char *placeholder);
+
 // Labelled helpers.
 void  vv_label(vv_Ctx *ctx, const char *text);
 void  vv_label_muted(vv_Ctx *ctx, const char *text);

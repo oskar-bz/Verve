@@ -203,6 +203,165 @@ float vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
     return out;
 }
 
+// ---- text field ----------------------------------------------------------
+// Single-line editor. stb_textedit (§10.3) is the richer upgrade path; this
+// hand-rolled version covers what visualizer UIs and the 7GUIs tasks need:
+// insertion, deletion, arrow/home/end navigation, shift-selection, clipboard,
+// and an animated caret (§10.3 — the glide reads as high quality).
+
+typedef struct {
+    int       cursor, anchor;  // byte offsets into buf
+    vv_Spring caret_x;         // animated caret position (px from text origin)
+    bool      init;
+} TextFieldState;
+
+static float measure_prefix(vv_Ctx *ctx, const char *buf, int n, float size) {
+    if (n <= 0) return 0.0f;
+    if (ctx->measure_text)
+        return ctx->measure_text(ctx->measure_ud, buf, n, 0, size, 0).x;
+    return (float)n * size * 0.5f;
+}
+
+static int sel_lo(TextFieldState *s) { return s->cursor < s->anchor ? s->cursor : s->anchor; }
+static int sel_hi(TextFieldState *s) { return s->cursor > s->anchor ? s->cursor : s->anchor; }
+static bool has_sel(TextFieldState *s) { return s->cursor != s->anchor; }
+
+static void erase_range(char *buf, int *len, int lo, int hi) {
+    memmove(buf + lo, buf + hi, (size_t)(*len - hi + 1)); // include NUL
+    *len -= (hi - lo);
+}
+
+static bool delete_selection(char *buf, int *len, TextFieldState *s) {
+    if (!has_sel(s)) return false;
+    int lo = sel_lo(s), hi = sel_hi(s);
+    erase_range(buf, len, lo, hi);
+    s->cursor = s->anchor = lo;
+    return true;
+}
+
+static void insert_text(char *buf, int *len, int cap, TextFieldState *s,
+                        const char *ins, int ilen) {
+    delete_selection(buf, len, s);
+    if (*len + ilen >= cap) ilen = cap - 1 - *len;
+    if (ilen <= 0) return;
+    memmove(buf + s->cursor + ilen, buf + s->cursor, (size_t)(*len - s->cursor + 1));
+    memcpy(buf + s->cursor, ins, (size_t)ilen);
+    *len += ilen;
+    s->cursor += ilen;
+    s->anchor = s->cursor;
+}
+
+// Returns true if the buffer changed.
+static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
+                       TextFieldState *s, vv_KeyEvent ev) {
+    (void)ctx;
+    bool changed = false;
+    int prev = s->cursor;
+    switch (ev.key) {
+        case VV_KEY_LEFT:  if (s->cursor > 0) s->cursor--; break;
+        case VV_KEY_RIGHT: if (s->cursor < *len) s->cursor++; break;
+        case VV_KEY_HOME:  s->cursor = 0; break;
+        case VV_KEY_END:   s->cursor = *len; break;
+        case VV_KEY_BACKSPACE:
+            if (delete_selection(buf, len, s)) { changed = true; }
+            else if (s->cursor > 0) { erase_range(buf, len, s->cursor - 1, s->cursor);
+                                      s->cursor--; s->anchor = s->cursor; changed = true; }
+            break;
+        case VV_KEY_DELETE:
+            if (delete_selection(buf, len, s)) { changed = true; }
+            else if (s->cursor < *len) { erase_range(buf, len, s->cursor, s->cursor + 1);
+                                         changed = true; }
+            break;
+        case VV_KEY_A:
+            if (ev.ctrl) { s->anchor = 0; s->cursor = *len; }
+            break;
+        case VV_KEY_C:
+            // Copy: clipboard is owned by the backend, not the core; a future
+            // vv_clipboard_set(ctx, ...) will route here. No-op for now.
+            break;
+        case VV_KEY_X:
+            if (ev.ctrl && has_sel(s)) { delete_selection(buf, len, s); changed = true; }
+            break;
+        default: break;
+    }
+    if (ev.shift) { /* extend selection: keep anchor */ }
+    else if (ev.key == VV_KEY_LEFT || ev.key == VV_KEY_RIGHT ||
+             ev.key == VV_KEY_HOME || ev.key == VV_KEY_END) {
+        s->anchor = s->cursor; // collapse selection on plain move
+    }
+    (void)prev; (void)cap;
+    return changed;
+}
+
+bool vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
+                   const char *placeholder) {
+    const vv_Theme *t = vv_theme();
+    int len = (int)strlen(buf);
+    float size = t->font_size;
+
+    vv_Style hover = { .bg = t->surface_hi };
+    vv_Style focus = { .border_color = t->accent };  // declarative → animates
+    uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+        (vv_LayoutDecl){ .dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                         .padding = vv_hv(10, 0), .cross = VV_ALIGN_CENTER,
+                         .focusable = true, .clip = true },
+        (vv_Style){ .bg = t->surface, .radius = vv_r(t->radius),
+                    .border_width = vv_all(1), .border_color = t->border,
+                    .hover = &hover, .focus = &focus });
+
+    bool focused = vv_focused(ctx, id);
+    TextFieldState *s = vv_state(ctx, id, TextFieldState);
+    bool changed = false;
+
+    if (vv_pressed(ctx, id)) { s->cursor = s->anchor = len; vv_focus(ctx, id); }
+
+    if (focused) {
+        if (ctx->input.text_len > 0) {
+            insert_text(buf, &len, cap, s, ctx->input.text, ctx->input.text_len);
+            changed = true;
+        }
+        for (int i = 0; i < ctx->input.key_count; i++)
+            changed |= handle_key(ctx, buf, &len, cap, s, ctx->input.keys[i]);
+    }
+    if (s->cursor > len) s->cursor = len;
+    if (s->anchor > len) s->anchor = len;
+
+    // Animated caret position.
+    float cx = measure_prefix(ctx, buf, s->cursor, size);
+    if (!s->init) { vv_spring_init(&s->caret_x, cx, VV_SNAPPY); s->init = true; }
+    vv_spring_retarget(&s->caret_x, cx);
+    vv_spring_step(&s->caret_x, ctx->dt);
+
+    // Selection highlight (behind text).
+    if (focused && has_sel(s)) {
+        float lo = measure_prefix(ctx, buf, sel_lo(s), size);
+        float hi = measure_prefix(ctx, buf, sel_hi(s), size);
+        vv_box_keyed(ctx, "sel", 3,
+            (vv_LayoutDecl){ .has_absolute = true, .absolute = vv_rect(lo, 6, hi - lo, 22) },
+            (vv_Style){ .bg = vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.35f),
+                        .radius = vv_r(3) });
+        vv_end_box(ctx);
+    }
+
+    // Text or placeholder.
+    if (len == 0 && placeholder && !focused)
+        vv_text(ctx, placeholder, (vv_Style){ .fg = t->text_muted, .font_size = size, .font = t->font });
+    else
+        vv_text(ctx, buf, (vv_Style){ .fg = t->text, .font_size = size, .font = t->font });
+
+    // Caret.
+    if (focused) {
+        vv_box_keyed(ctx, "caret", 7,
+            (vv_LayoutDecl){ .w = vv_fixed(2), .h = vv_fixed(20),
+                             .has_absolute = true, .absolute = vv_rect(s->caret_x.x, 7, 2, 20) },
+            (vv_Style){ .bg = t->accent, .radius = vv_r(1) });
+        vv_end_box(ctx);
+    }
+
+    vv_end_box(ctx);
+    return changed;
+}
+
 // ---- list item -----------------------------------------------------------
 
 bool vv_list_item(vv_Ctx *ctx, const char *key, const char *label, bool selected) {

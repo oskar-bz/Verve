@@ -10,11 +10,31 @@
 #include "vv_id.h"
 #include "vv_node.h"
 
+// Editing/navigation keys routed to the focused node (§11.3). Printable text
+// arrives separately as UTF-8 in vv_Input.text.
+typedef enum {
+    VV_KEY_NONE = 0,
+    VV_KEY_LEFT, VV_KEY_RIGHT, VV_KEY_UP, VV_KEY_DOWN,
+    VV_KEY_HOME, VV_KEY_END, VV_KEY_BACKSPACE, VV_KEY_DELETE,
+    VV_KEY_ENTER, VV_KEY_TAB, VV_KEY_ESCAPE,
+    VV_KEY_A, VV_KEY_C, VV_KEY_V, VV_KEY_X, VV_KEY_Z,
+} vv_Key;
+
+typedef struct { uint16_t key; bool shift, ctrl; } vv_KeyEvent;
+
+#define VV_INPUT_TEXT_CAP 32
+#define VV_INPUT_KEY_CAP  16
+
 typedef struct {
     vv_Vec2 mouse;
     bool    mouse_down;
     float   wheel;
-    // Phase 4 fills this out (keys, text, modifiers).
+
+    char        text[VV_INPUT_TEXT_CAP];  // UTF-8 typed this frame
+    uint8_t     text_len;
+    vv_KeyEvent keys[VV_INPUT_KEY_CAP];    // discrete key presses this frame
+    uint8_t     key_count;
+    bool        shift, ctrl, alt;
 } vv_Input;
 
 // Frame tier actually executed (§4.2). Reported for diagnostics/tests.
