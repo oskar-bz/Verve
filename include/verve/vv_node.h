@@ -46,6 +46,16 @@ typedef struct vv_Node {
 
     void    *widget_state;
     uint32_t widget_state_size;
+
+    // Leaf measurement (§14.2 item 4, §15). Composite nodes derive size from
+    // children; a leaf either uses FIXED sizes or installs a measure callback.
+    // Returns the content size given a wrap width (height-for-width, §5.3).
+    vv_Vec2 (*measure)(void *ud, float wrap_width, const struct vv_Node *n);
+    void    *measure_ud;
+
+    // Layout scratch, recomputed every Build. Intrinsic ("fit") sizes from the
+    // bottom-up passes, before top-down distribution.
+    float fit_w, fit_h;
 } vv_Node;
 
 typedef struct {
