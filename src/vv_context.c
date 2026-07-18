@@ -257,18 +257,6 @@ static void reconcile(vv_Ctx *ctx) {
 
 // ---- frame ---------------------------------------------------------------
 
-// Whether this frame's input could change the tree, so a rebuild is warranted
-// (the idle gate, §4.2). Movement is included so hover variants/hover events
-// react; a held capture keeps building so drags track. Pure-idle frames (no
-// movement, no buttons/keys) fall through to present-only.
-static bool input_is_interactive(vv_Ctx *ctx) {
-    const vv_Input *in = &ctx->input;
-    bool moved = in->mouse.x != ctx->mouse_prev.x || in->mouse.y != ctx->mouse_prev.y;
-    return moved || in->mouse_down || ctx->mouse_prev_down ||
-           in->wheel != 0.0f || in->key_count > 0 || in->text_len > 0 ||
-           ctx->active_id != 0;
-}
-
 // Step 1: consume input and prepare a fresh command buffer. Does NOT reset the
 // frame arena or the tree — so a present-only frame can follow without losing
 // the last build's node text (which lives in the frame arena).
@@ -284,11 +272,25 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
     // state so vv_run_frame can decide whether to idle. It's zeroed just before
     // each present pass instead (build_begin / present_only).
 
-    ctx->wants_build = input_is_interactive(ctx) || ctx->tree_dirty ||
-                       ctx->frame_index == 1;
+    // Whether this frame's input could change the tree, so a rebuild is
+    // warranted (the idle gate, §4.2). Computed AFTER the hit test, keyed off
+    // what actually affects a build: a *change* of hovered/focused node (not raw
+    // motion — sliding the pointer within one widget changes nothing at build
+    // time), a press/release edge, a held capture (drags), wheel, or typing. A
+    // view that positions something by the raw cursor every frame should call
+    // vv_invalidate() to opt back into per-frame builds.
+    vv_ID   prev_hover = ctx->hovered_id;
+    vv_ID   prev_focus = ctx->focused_id;
+    bool    down_edge  = ctx->input.mouse_down != ctx->mouse_prev_down;
 
     // Resolve input against last frame's geometry before build code queries it.
     vv_input_process(ctx);
+
+    ctx->wants_build =
+        ctx->hovered_id != prev_hover || ctx->focused_id != prev_focus ||
+        down_edge || ctx->active_id != 0 || ctx->input.wheel != 0.0f ||
+        ctx->input.key_count > 0 || ctx->input.text_len > 0 ||
+        ctx->tree_dirty || ctx->frame_index == 1;
 }
 
 // Step 2: reset the root and build stack so view code can populate the tree.

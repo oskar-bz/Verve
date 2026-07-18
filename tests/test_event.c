@@ -59,15 +59,18 @@ static void run_tests(void) {
         vv_shutdown(&ctx);
     }
 
-    // 3) Idle frame presents without rebuilding or reaping the tree.
+    // 3) Idle frame presents without rebuilding or reaping the tree. (Idle mode
+    //    off, so it presents rather than skipping.) A few frames settle the
+    //    one-frame hover discovery, then a static frame is present-only.
     {
         vv_Ctx ctx; vv_init(&ctx); vv_set_window(&ctx, 200, 100, 1.0f);
         int count = 0;
-        vv_run_frame(&ctx, 0.016f, &(vv_Input){0}, update_fn, view_fn, &count); // build
+        vv_Vec2 m = vv_v2(180, 90); // a corner over no interactive widget
+        vv_run_frame(&ctx, 0.016f, &(vv_Input){ .mouse = m }, update_fn, view_fn, &count);
         int alive = count_flag(&ctx, VV_FLAG_ALIVE);
         CHECK(alive > 0);
-        // No input, no events: should present-only.
-        vv_run_frame(&ctx, 0.016f, &(vv_Input){0}, update_fn, view_fn, &count);
+        vv_run_frame(&ctx, 0.016f, &(vv_Input){ .mouse = m }, update_fn, view_fn, &count); // hover settles
+        vv_run_frame(&ctx, 0.016f, &(vv_Input){ .mouse = m }, update_fn, view_fn, &count);
         CHECK(ctx.last_tier == VV_TIER_PRESENT);
         CHECK(count_flag(&ctx, VV_FLAG_ALIVE) == alive); // tree intact
         CHECK(count_flag(&ctx, VV_FLAG_EXITING) == 0);   // nothing reaped
