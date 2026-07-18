@@ -22,6 +22,12 @@
 typedef uint64_t vv_Msg;
 #define VV_MSG_NONE ((vv_Msg)0)
 
+// Reserved message emitted by value-bound widgets (§12). Its payload is a
+// vv_BindEvent* (frame-arena) and vv_run_frame applies it automatically before
+// dispatching to update(), so bound widgets need no update() case. User message
+// ids must avoid this sentinel (it sits at the top of the range).
+#define VV_MSG_BIND ((vv_Msg)UINT64_MAX)
+
 typedef union {
     int64_t     as_int;
     double      as_float;

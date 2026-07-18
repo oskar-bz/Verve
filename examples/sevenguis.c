@@ -373,8 +373,8 @@ static void task_timer(vv_Ctx *c, App *s) {
 
 // 5 CRUD
 static void task_crud(vv_Ctx *c, App *s) {
-  printf("build!\n");
-  
+  printf("build! %llu\n", (unsigned long long)SDL_GetPerformanceCounter());
+
   title(c, "CRUD");
   VV_BOX(c, ((vv_LayoutDecl){.dir = VV_COLUMN, .gap = 10, .w = vv_grow(1), .h = vv_grow(1)}),
          (vv_Style){0}) {

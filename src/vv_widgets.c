@@ -1,5 +1,6 @@
 #include "verve/vv_widgets.h"
 #include "verve/vv_layout.h"
+#include "verve/vv_value.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -159,15 +160,22 @@ uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,
 // ---- slider --------------------------------------------------------------
 
 typedef struct {
-  bool dragging;
+  bool was_active;
 } SliderState;
 
-uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
-                   float max, vv_Msg change) {
+typedef struct {
+  uint32_t id;
+  float    value;
+  bool     changed, press, release;
+} SliderResult;
+
+// Shared slider core. Deals in value space, mapping pointer position through the
+// perceptual curve (meta may be NULL => linear). Reports press/release edges so
+// bound callers can bracket a transactional edit (§12.1).
+static SliderResult slider_core(vv_Ctx *ctx, const char *key, float value,
+                                float min, float max, const vv_ValueMeta *meta) {
   const vv_Theme *t = vv_theme();
-  float range = max - min;
-  float norm = range != 0.0f ? (value - min) / range : 0.0f;
-  norm = vv_clampf(norm, 0.0f, 1.0f);
+  float norm = vv_value_norm(meta, min, max, value);
 
   // A grow track with a real minimum so the slider keeps usable geometry even
   // inside a FIT parent (a bare row): with min 0 it would collapse to width 0,
@@ -185,11 +193,19 @@ uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
   float out = value;
   vv_Node *tn = vv_node(ctx, track);
   float tw = tn->actual_rect.w > 1.0f ? tn->actual_rect.w : 160.0f;
-  if (vv_active(ctx, track)) {
-    float rel = (vv_mouse(ctx).x - tn->actual_rect.x) / tw;
-    out = min + vv_clampf(rel, 0.0f, 1.0f) * range;
-    norm = vv_clampf(rel, 0.0f, 1.0f);
+  bool active = vv_active(ctx, track);
+  if (active) {
+    float rel = vv_clampf((vv_mouse(ctx).x - tn->actual_rect.x) / tw, 0.0f, 1.0f);
+    out = vv_value_denorm(meta, min, max, rel);
+    norm = rel;
   }
+
+  SliderState *st = vv_state(ctx, track, SliderState);
+  SliderResult r = {.id = track, .value = out, .changed = out != value,
+                    .press = vv_pressed(ctx, track),
+                    .release = st->was_active && !active};
+  st->was_active = active;
+
   float hx = norm * (tw - 18.0f);
   {
     // Rail.
@@ -222,8 +238,37 @@ uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
     vv_end_box(ctx);
   }
   vv_end_box(ctx);
-  if (out != value) vv_emit(ctx, change, vv_pf(out));
-  return track;
+  return r;
+}
+
+// Emit a value-binding event whose target is `v` (frame-arena record, valid
+// until the next build when it is drained + applied, §12).
+static void emit_bind(vv_Ctx *ctx, vv_Value v, vv_Payload val) {
+  vv_BindEvent *b = vv_arena_alloc(&ctx->frame, sizeof *b);
+  b->target = v;
+  b->val = val;
+  vv_emit(ctx, VV_MSG_BIND, vv_pp(b));
+}
+
+uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
+                   float max, vv_Msg change) {
+  SliderResult r = slider_core(ctx, key, value, min, max, NULL);
+  if (r.changed) vv_emit(ctx, change, vv_pf(r.value));
+  return r.id;
+}
+
+uint32_t vv_slider_bound(vv_Ctx *ctx, const char *key, vv_Value v) {
+  float value = v.ptr ? *(float *)v.ptr : 0.0f;
+  float min = v.meta ? v.meta->min : 0.0f;
+  float max = v.meta ? v.meta->max : 1.0f;
+  bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);
+  SliderResult r = slider_core(ctx, key, value, min, max, v.meta);
+  if (!readonly) {
+    if (r.press) vv_begin_edit(ctx, v);
+    if (r.changed) emit_bind(ctx, v, vv_pf(r.value));
+    if (r.release) vv_end_edit(ctx, v);
+  }
+  return r.id;
 }
 
 // ---- drag_number ---------------------------------------------------------
@@ -235,8 +280,8 @@ typedef struct {
   bool active;
 } DragState;
 
-uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
-                        float min, float max, vv_Msg change) {
+static SliderResult drag_core(vv_Ctx *ctx, const char *key, float value,
+                              float speed, float min, float max) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
   uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
@@ -254,7 +299,8 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
 
   DragState *st = vv_state(ctx, id, DragState);
   float out = value;
-  if (vv_pressed(ctx, id)) {
+  bool press = vv_pressed(ctx, id);
+  if (press) {
     st->start = value;
     st->active = true;
   }
@@ -263,6 +309,7 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
     if (max > min)
       out = vv_clampf(out, min, max);
   }
+  bool release = st->active && !vv_active(ctx, id);
   if (!vv_active(ctx, id))
     st->active = false;
 
@@ -272,7 +319,50 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
       ctx, buf,
       (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
-  if (out != value) vv_emit(ctx, change, vv_pf(out));
+  return (SliderResult){.id = id, .value = out, .changed = out != value,
+                        .press = press, .release = release};
+}
+
+uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
+                        float min, float max, vv_Msg change) {
+  SliderResult r = drag_core(ctx, key, value, speed, min, max);
+  if (r.changed) vv_emit(ctx, change, vv_pf(r.value));
+  return r.id;
+}
+
+uint32_t vv_drag_number_bound(vv_Ctx *ctx, const char *key, vv_Value v,
+                              float speed) {
+  float value = v.ptr ? *(float *)v.ptr : 0.0f;
+  float min = v.meta ? v.meta->min : 0.0f;
+  float max = v.meta ? v.meta->max : 0.0f; // 0,0 => unclamped
+  bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);
+  SliderResult r = drag_core(ctx, key, value, speed, min, max);
+  if (!readonly) {
+    if (r.press) vv_begin_edit(ctx, v);
+    if (r.changed) emit_bind(ctx, v, vv_pf(r.value));
+    if (r.release) vv_end_edit(ctx, v);
+  }
+  return r.id;
+}
+
+// ---- bound bools ----------------------------------------------------------
+// Reuse the plain widgets for chrome (passing VV_MSG_NONE so they emit nothing)
+// and translate a click into a bind event carrying the flipped value.
+
+uint32_t vv_checkbox_bound(vv_Ctx *ctx, const char *key, const char *label,
+                           vv_Value v) {
+  bool value = v.ptr ? *(bool *)v.ptr : false;
+  bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);
+  uint32_t id = vv_checkbox(ctx, key, label, value, VV_MSG_NONE);
+  if (!readonly && vv_clicked(ctx, id)) emit_bind(ctx, v, vv_pi(!value));
+  return id;
+}
+
+uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v) {
+  bool value = v.ptr ? *(bool *)v.ptr : false;
+  bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);
+  uint32_t id = vv_toggle(ctx, key, value, VV_MSG_NONE);
+  if (!readonly && vv_clicked(ctx, id)) emit_bind(ctx, v, vv_pi(!value));
   return id;
 }
 

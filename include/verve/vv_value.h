@@ -7,7 +7,9 @@
 #ifndef VV_VALUE_H
 #define VV_VALUE_H
 
+#include "vv_event.h"
 #include "vv_types.h"
+#include <math.h>
 
 typedef enum { VV_VAL_F32, VV_VAL_I32, VV_VAL_BOOL, VV_VAL_COLOR, VV_VAL_STR } vv_ValueKind;
 
@@ -40,6 +42,42 @@ static inline vv_Value vv_i32(int32_t *p, const vv_ValueMeta *m) {
 }
 static inline vv_Value vv_boolval(bool *p, const vv_ValueMeta *m) {
     return (vv_Value){ VV_VAL_BOOL, p, m };
+}
+
+// ---- two-way binding over the message queue (§12) --------------------------
+// A value-bound widget doesn't write its target directly (that would mutate
+// state during view). Instead it emits VV_MSG_BIND carrying this record; the
+// driver applies it via vv_apply() before update() runs. The single apply site
+// is where undo/automation (§12.1) will hook in.
+typedef struct {
+    vv_Value   target;
+    vv_Payload val;   // new value, kind matching target.kind
+} vv_BindEvent;
+
+// Write a VV_MSG_BIND event's new value through its target pointer. Called by
+// the driver; exposed so apps driving their own loop can apply bind events too.
+void vv_apply(vv_Event ev);
+
+// Transactional editing (§12.1): one undo entry per drag session, not per
+// frame. Bound drag widgets call begin on press and end on release. ctx is
+// forward-declared to keep this header free of the context dependency.
+typedef struct vv_Ctx vv_Ctx;
+void vv_begin_edit(vv_Ctx *ctx, vv_Value v);
+void vv_end_edit(vv_Ctx *ctx, vv_Value v);
+
+// Map value<->normalized [0,1] honoring min/max and a perceptual curve
+// (curve 1 = linear; >1 gives finer control near min). meta may be NULL.
+static inline float vv_value_norm(const vv_ValueMeta *meta, float lo, float hi, float v) {
+    if (hi <= lo) return 0.0f;
+    float t = (v - lo) / (hi - lo);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    float curve = meta && meta->curve > 0 ? meta->curve : 1.0f;
+    return curve == 1.0f ? t : powf(t, 1.0f / curve);
+}
+static inline float vv_value_denorm(const vv_ValueMeta *meta, float lo, float hi, float t) {
+    float curve = meta && meta->curve > 0 ? meta->curve : 1.0f;
+    float tt = curve == 1.0f ? t : powf(t, curve);
+    return lo + (hi - lo) * tt;
 }
 
 #endif // VV_VALUE_H

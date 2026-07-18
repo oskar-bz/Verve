@@ -95,6 +95,11 @@ typedef struct vv_Ctx {
     vv_ID    last_click_id;
     bool     wants_build; // this frame's input can change the tree (idle gate)
 
+    // Transactional edit session (§12.1): one undo entry per drag, not per
+    // frame. begin_edit snapshots; end_edit commits (bumps edit_generation).
+    const void *edit_ptr;      // target of the active edit, NULL if none
+    uint32_t    edit_generation; // increments once per committed edit session
+
     // Build-time stack.
     uint32_t stack[VV_BUILD_STACK_MAX];
     uint32_t seq_counter[VV_BUILD_STACK_MAX];

@@ -8,6 +8,7 @@
 #define VV_WIDGETS_H
 
 #include "vv_context.h"
+#include "vv_value.h"
 
 // A theme is just values (§7.1). Swapping one animates for free.
 typedef struct {
@@ -54,6 +55,16 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
 // A selectable list row; emits `click` (payload `arg`) when clicked.
 uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                       bool selected, vv_Msg click, vv_Payload arg);
+
+// Value-bound variants (§12). Instead of a message, these take a vv_Value: the
+// widget reads the current value to render and, on change, emits VV_MSG_BIND so
+// the driver writes it back through the bound pointer (curve/min/max/READONLY
+// from the value's metadata are honored). No update() case needed — bind events
+// apply automatically. Drag widgets bracket the drag as one edit (§12.1).
+uint32_t vv_slider_bound(vv_Ctx *ctx, const char *key, vv_Value v);
+uint32_t vv_drag_number_bound(vv_Ctx *ctx, const char *key, vv_Value v, float speed);
+uint32_t vv_checkbox_bound(vv_Ctx *ctx, const char *key, const char *label, vv_Value v);
+uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v);
 
 // Single-line editable text field. Edits `buf` (NUL-terminated, capacity `cap`)
 // in place and, on any change this frame, emits `change` with `.as_str = buf`.

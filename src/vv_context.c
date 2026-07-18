@@ -1,5 +1,6 @@
 #include "verve/vv_context.h"
 #include "verve/vv_internal.h"
+#include "verve/vv_value.h"
 
 #include <assert.h>
 #include <math.h>
@@ -337,11 +338,17 @@ vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
                                vv_UpdateFn update, vv_ViewFn view, void *state) {
     input_step(ctx, dt, input);
 
-    // Drain messages emitted by the previous view() into the app's update().
+    // Drain messages emitted by the previous view(). Value-bound widgets emit
+    // VV_MSG_BIND, which the driver applies here (the single apply site, §12.1);
+    // everything else goes to the app's update().
     bool changed = false;
-    if (update) {
+    {
         vv_Event ev;
-        while (vv_poll_event(ctx, &ev)) { update(state, ev); changed = true; }
+        while (vv_poll_event(ctx, &ev)) {
+            if (ev.msg == VV_MSG_BIND) vv_apply(ev);
+            else if (update)           update(state, ev);
+            changed = true;
+        }
     }
 
     // Rebuild when state changed or this frame's input could emit a message;
@@ -354,6 +361,33 @@ vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
         return vv_end_frame(ctx);
     }
     return present_only(ctx);
+}
+
+// ---- value bindings (§12) -------------------------------------------------
+
+void vv_apply(vv_Event ev) {
+    vv_BindEvent *b = ev.data.as_ptr;
+    if (!b || !b->target.ptr) return;
+    switch (b->target.kind) {
+    case VV_VAL_F32:  *(float *)b->target.ptr   = (float)b->val.as_float; break;
+    case VV_VAL_I32:  *(int32_t *)b->target.ptr = (int32_t)b->val.as_int;  break;
+    case VV_VAL_BOOL: *(bool *)b->target.ptr    = b->val.as_int != 0;      break;
+    case VV_VAL_COLOR:*(vv_Color *)b->target.ptr= *(vv_Color *)b->val.as_ptr; break;
+    case VV_VAL_STR:  break; // strings edit their buffer in place (§10.3)
+    }
+}
+
+// Transactional editing (§12.1): bracket a drag so it's one undoable edit, not
+// one per frame. No undo stack yet — this maintains the session and a commit
+// counter the eventual registry will hang undo/automation on.
+void vv_begin_edit(vv_Ctx *ctx, vv_Value v) {
+    if (ctx->edit_ptr != v.ptr) ctx->edit_ptr = v.ptr;
+}
+void vv_end_edit(vv_Ctx *ctx, vv_Value v) {
+    if (ctx->edit_ptr == v.ptr && v.ptr) {
+        ctx->edit_generation++;
+        ctx->edit_ptr = NULL;
+    }
 }
 
 // ---- message queue --------------------------------------------------------
