@@ -276,6 +276,22 @@ static void position_children(vv_NodePool *pool, uint32_t idx) {
     float gaps_total = flow > 1 ? gap * (float)(flow - 1) : 0;
     float free_main = (row ? cw : ch_) - used - gaps_total;
 
+    // Scroll extents (§5.6): how far content overflows the viewport. Consumed
+    // by present (which glides the scroll offset) and by wheel routing.
+    if (n->decl.scroll_x || n->decl.scroll_y) {
+        float max_cross = 0;
+        for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
+            if (!in_flow(P(c))) continue;
+            max_cross = vv_maxf(max_cross, row ? P(c)->layout_rect.h : P(c)->layout_rect.w);
+        }
+        float content_main  = used + gaps_total;
+        float content_cross = max_cross;
+        float over_main  = vv_maxf(0, content_main  - (row ? cw : ch_));
+        float over_cross = vv_maxf(0, content_cross - (row ? ch_ : cw));
+        n->scroll_max_x = n->decl.scroll_x ? (row ? over_main : over_cross) : 0;
+        n->scroll_max_y = n->decl.scroll_y ? (row ? over_cross : over_main) : 0;
+    }
+
     float cursor = row ? ox : oy;
     float extra_between = 0;
     switch (n->decl.main) {

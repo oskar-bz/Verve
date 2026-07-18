@@ -56,6 +56,11 @@ typedef struct vv_Node {
     // Layout scratch, recomputed every Build. Intrinsic ("fit") sizes from the
     // bottom-up passes, before top-down distribution.
     float fit_w, fit_h;
+
+    // Springy scroll (§5.6): target snaps, actual glides. Offsets are >= 0 and
+    // subtracted from child positions. Content extents are measured in layout.
+    vv_Spring scroll_x, scroll_y;
+    float     scroll_max_x, scroll_max_y;
 } vv_Node;
 
 typedef struct {

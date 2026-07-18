@@ -239,7 +239,8 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
 
 // ---- tree walk ------------------------------------------------------------
 
-static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op) {
+static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op,
+                             float scroll_ox, float scroll_oy) {
     vv_Node *n = vv_pool_get(&ctx->pool, index);
     vv_SpringParams p = node_params(n);
 
@@ -250,6 +251,8 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
         rect_init(n, p);
         vv_spring_init(&n->enter, 0.0f, p);
         vv_spring_init(&n->exit, 1.0f, VV_DEFAULT_SPRING);
+        vv_spring_init(&n->scroll_x, 0.0f, VV_SMOOTH);
+        vv_spring_init(&n->scroll_y, 0.0f, VV_SMOOTH);
         vv_spring_retarget(&n->enter, 1.0f);
     } else {
         style_retarget(n);
@@ -257,10 +260,27 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
     }
     if (!(n->flags & VV_FLAG_EXITING)) step1(ctx, &n->enter, dt);
 
+    // FLIP is scroll-free (chases layout_rect); scroll is a separate, snappy
+    // offset baked into actual_rect so hit testing sees scrolled positions but
+    // FLIP doesn't fight the continuous scroll motion (§6.4.1).
     rect_animate(ctx, n, dt);
-    n->actual_rect = vv_rect(n->rx.x, n->ry.x, n->rw.x, n->rh.x);
+    n->actual_rect = vv_rect(n->rx.x + scroll_ox, n->ry.x + scroll_oy, n->rw.x, n->rh.x);
+
+    // Keep scroll offsets clamped as content size changes, then advance them.
+    vv_spring_retarget(&n->scroll_x, vv_clampf(n->scroll_x.target, 0, n->scroll_max_x));
+    vv_spring_retarget(&n->scroll_y, vv_clampf(n->scroll_y.target, 0, n->scroll_max_y));
+    step1(ctx, &n->scroll_x, dt);
+    step1(ctx, &n->scroll_y, dt);
+
+    bool clips = n->decl.clip || n->decl.scroll_x || n->decl.scroll_y;
+    if (clips) { push_cmd(ctx)->kind = VV_CMD_SCISSOR_PUSH; ctx->cmds.items[ctx->cmds.count-1].as.scissor = n->actual_rect; }
 
     emit_node(ctx, n, inh_op);
+
+    // Descendants shift by this node's scroll offset (scrolling down moves
+    // content up, hence subtraction).
+    float child_ox = scroll_ox - n->scroll_x.x;
+    float child_oy = scroll_oy - n->scroll_y.x;
 
     // Opacity inherits multiplicatively so a fading parent fades its subtree.
     float child_inh = inh_op * (n->flags & VV_FLAG_EXITING ? n->exit.x : n->enter.x)
@@ -268,9 +288,11 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
     for (uint32_t c = n->first_child; c != VV_NIL;) {
         vv_Node *ch = vv_pool_get(&ctx->pool, c);
         uint32_t next = ch->next_sibling;
-        animate_and_emit(ctx, c, dt, child_inh);
+        animate_and_emit(ctx, c, dt, child_inh, child_ox, child_oy);
         c = next;
     }
+
+    if (clips) push_cmd(ctx)->kind = VV_CMD_SCISSOR_POP;
 }
 
 // Detached exiting nodes (§3.3): drive their exit spring and paint the corpse
@@ -289,6 +311,6 @@ static void present_exiting(vv_Ctx *ctx, float dt) {
 
 void vv_present(vv_Ctx *ctx) {
     float dt = scaled_dt(ctx);
-    animate_and_emit(ctx, ctx->root, dt, 1.0f);
+    animate_and_emit(ctx, ctx->root, dt, 1.0f, 0.0f, 0.0f);
     present_exiting(ctx, dt);
 }

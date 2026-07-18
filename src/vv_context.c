@@ -151,6 +151,9 @@ void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
     ctx->cmds = (vv_CommandBuffer){0};
     ctx->unsettled_springs = 0;
 
+    // Resolve input against last frame's geometry before build code queries it.
+    vv_input_process(ctx);
+
     // Reset the root as this frame's build container.
     vv_Node *root = vv_pool_get(&ctx->pool, ctx->root);
     root->first_child = root->last_child = VV_NIL;

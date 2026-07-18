@@ -16,4 +16,9 @@ void vv_layout_run(vv_NodePool *p, uint32_t root, vv_Rect window);
 // reconciliation, no layout — this is what makes animation cheap.
 void vv_present(struct vv_Ctx *ctx);
 
+// Input phase (§11): hit-test the pointer against last frame's actual_rect,
+// resolve hover/active/focus/capture transitions, apply scroll. Runs at
+// begin_frame so build code queries fresh input against seen geometry (§4.5).
+void vv_input_process(struct vv_Ctx *ctx);
+
 #endif // VV_INTERNAL_H

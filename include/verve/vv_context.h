@@ -39,6 +39,18 @@ typedef struct vv_Ctx {
 
     uint32_t root;              // pool index of the root node
 
+    // Input state (§11). IDs, not indices, so they survive pool churn. Hit
+    // testing runs at begin_frame against last frame's actual_rect, so build
+    // code queries current mouse vs. what the user saw (the §4.5 one-frame lag).
+    vv_ID   hovered_id;
+    vv_ID   active_id;     // pointer capture: survives leaving the rect (§11.2)
+    vv_ID   focused_id;    // keyboard target (§11.1)
+    vv_ID   pressed_id;    // went down this frame
+    vv_ID   clicked_id;    // down+up both inside this frame
+    bool    mouse_prev_down;
+    vv_Vec2 drag_start;
+    vv_Vec2 drag_delta;
+
     // Build-time stack.
     uint32_t stack[VV_BUILD_STACK_MAX];
     uint32_t seq_counter[VV_BUILD_STACK_MAX];
@@ -94,5 +106,17 @@ static inline uint32_t vv_text(vv_Ctx *ctx, const char *utf8, vv_Style s) {
 static inline vv_Node *vv_node(vv_Ctx *ctx, uint32_t index) {
     return vv_pool_get(&ctx->pool, index);
 }
+
+// ---- interaction queries (§11.1) -----------------------------------------
+// All take a node handle from a build call this frame. Reflect the hit test
+// run at begin_frame (current pointer vs. last frame's geometry, §4.5).
+
+bool    vv_hovered(vv_Ctx *ctx, uint32_t index);
+bool    vv_pressed(vv_Ctx *ctx, uint32_t index);  // went down this frame
+bool    vv_clicked(vv_Ctx *ctx, uint32_t index);  // down+up both inside
+bool    vv_active(vv_Ctx *ctx, uint32_t index);   // held with capture
+bool    vv_focused(vv_Ctx *ctx, uint32_t index);
+vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
+void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 
 #endif // VV_CONTEXT_H
