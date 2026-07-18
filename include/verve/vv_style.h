@@ -23,11 +23,16 @@ typedef enum {
     VV_STYLE_FONT_SIZE    = 1u << 9,
 } vv_StyleField;
 
-// Per-property transition control (§6.4).
+// Per-property transition control (§6.4). transition_mask bits mark channels
+// that snap instead of springing — for continuously-driven values (§6.4.1).
 typedef enum {
     VV_TRANSITION_SPRING = 0, // default: animate
     VV_TRANSITION_INSTANT,    // snap (continuously-driven values, §6.4.1)
 } vv_Transition;
+
+// transition_mask bit: skip FLIP for this node's rect (a progress bar / gauge
+// whose size changes every frame should track reality, not trail it).
+#define VV_INSTANT_RECT (1u << 15)
 
 typedef struct vv_Style {
     vv_Color   bg;

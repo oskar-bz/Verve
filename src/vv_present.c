@@ -141,7 +141,8 @@ static void rect_init(vv_Node *n, vv_SpringParams p) {
 static void rect_animate(vv_Ctx *ctx, vv_Node *n, float dt) {
     float snap_dist = FLIP_SNAP_FRAC * vv_maxf(ctx->win_w, ctx->win_h);
     float dx = n->layout_rect.x - n->rx.x, dy = n->layout_rect.y - n->ry.x;
-    bool teleport = (fabsf(dx) > snap_dist) || (fabsf(dy) > snap_dist);
+    bool teleport = (fabsf(dx) > snap_dist) || (fabsf(dy) > snap_dist) ||
+                    (n->target.transition_mask & VV_INSTANT_RECT);
 
     vv_spring_retarget(&n->rx, n->layout_rect.x);
     vv_spring_retarget(&n->ry, n->layout_rect.y);

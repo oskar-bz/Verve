@@ -14,8 +14,8 @@ LIB      := $(BUILD)/libverve.a
 TEST_SRC := $(wildcard tests/*.c)
 TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 
-# Headless examples build with the generic rule; the windowed GUI demo needs SDL3.
-DEMO_SRC := $(filter-out examples/gui_demo.c,$(wildcard examples/*.c))
+# Headless examples build with the generic rule; windowed demos need SDL3.
+DEMO_SRC := $(filter-out examples/gui_demo.c examples/sevenguis.c,$(wildcard examples/*.c))
 DEMO_BIN := $(patsubst examples/%.c,$(BUILD)/%,$(DEMO_SRC))
 
 # SDL3 + OpenGL backend (libepoxy loader) + stb_truetype (vendored).
@@ -50,8 +50,13 @@ $(BUILD)/%: examples/%.c $(LIB)
 
 demo: $(DEMO_BIN)
 
-gui: $(BUILD)/gui_demo
+# Windowed examples share the SDL3/GL backend build (explicit, not pattern, to
+# avoid clashing with the headless examples rule).
+gui: $(BUILD)/gui_demo $(BUILD)/sevenguis
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/sevenguis: examples/sevenguis.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 
