@@ -114,7 +114,12 @@ static void pass2_width(vv_NodePool *pool, uint32_t idx, float avail_w) {
     float fixed_sum = 0, grow_weight = 0;
     for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
         vv_Node *ch = P(c);
-        if (ch->decl.has_absolute) { ch->layout_rect.w = ch->fit_w; continue; }
+        // Absolute children escape flow: size comes from the absolute rect
+        // (w>0), else fall back to intrinsic (tooltips that hug content).
+        if (ch->decl.has_absolute) {
+            ch->layout_rect.w = ch->decl.absolute.w > 0 ? ch->decl.absolute.w : ch->fit_w;
+            continue;
+        }
         vv_Size w = ch->decl.w;
         if (row) {
             switch (w.mode) {
@@ -227,7 +232,10 @@ static void pass4_height(vv_NodePool *pool, uint32_t idx, float avail_h) {
     float fixed_sum = 0, grow_weight = 0;
     for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
         vv_Node *ch = P(c);
-        if (ch->decl.has_absolute) { ch->layout_rect.h = ch->fit_h; continue; }
+        if (ch->decl.has_absolute) {
+            ch->layout_rect.h = ch->decl.absolute.h > 0 ? ch->decl.absolute.h : ch->fit_h;
+            continue;
+        }
         vv_Size h = ch->decl.h;
         if (col) {
             switch (h.mode) {

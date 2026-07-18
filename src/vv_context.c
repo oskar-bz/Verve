@@ -2,6 +2,8 @@
 #include "verve/vv_internal.h"
 
 #include <assert.h>
+#include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #define ROOT_ID ((vv_ID)0x9e3779b97f4a7c15ULL)
@@ -108,6 +110,10 @@ static uint32_t open_node(vv_Ctx *ctx, const char *key, size_t klen,
     n->decl               = decl;
     n->target             = style;
     resolve_variants(n);  // fold hover/active/focus/disabled into target now
+    if (ctx->focus_next && decl.focusable && !decl.disabled) {
+        ctx->focused_id = n->id;
+        ctx->focus_next = false;
+    }
     n->last_touched_frame = ctx->frame_index;
     n->first_child = n->last_child = VV_NIL;
     n->next_sibling = VV_NIL;
@@ -138,6 +144,52 @@ uint32_t vv_box_keyed(vv_Ctx *ctx, const char *key, size_t klen,
 void vv_end_box(vv_Ctx *ctx) {
     assert(ctx->depth > 1 && "unbalanced vv_end_box");
     ctx->depth--;
+}
+
+void vv_rows(vv_Ctx *ctx, int count, float row_h,
+             void (*fn)(vv_Ctx *ctx, int index, void *ud), void *ud) {
+    if (count <= 0 || row_h <= 0.0f) return;
+
+    // Find the nearest enclosing scroll_y container on the build stack.
+    float voff = 0.0f, vh = ctx->win_h;
+    for (int d = ctx->depth - 1; d >= 0; d--) {
+        vv_Node *n = vv_pool_get(&ctx->pool, ctx->stack[d]);
+        if (n->decl.scroll_y) {
+            voff = n->scroll_y.x;
+            vh   = n->actual_rect.h > 0 ? n->actual_rect.h : ctx->win_h;
+            break;
+        }
+    }
+
+    const int overscan = 2;
+    int first = (int)floorf(voff / row_h) - overscan;
+    int last  = (int)ceilf((voff + vh) / row_h) + overscan;
+    if (first < 0) first = 0;
+    if (last > count) last = count;
+    if (last < first) last = first;
+
+    if (first > 0) { // spacer above
+        vv_box(ctx, (vv_LayoutDecl){ .w = vv_grow(1), .h = vv_fixed((float)first * row_h) },
+               (vv_Style){0});
+        vv_end_box(ctx);
+    }
+    for (int i = first; i < last; i++) {
+        char key[24];
+        int klen = snprintf(key, sizeof key, "\x01row%d", i);
+        uint32_t row = vv_box_keyed(ctx, key, (size_t)klen,
+            (vv_LayoutDecl){ .w = vv_grow(1), .h = vv_fixed(row_h) }, (vv_Style){0});
+        // Mark culled-on-untouch: scrolled-away rows free immediately, bypassing
+        // the exit spring so a scroll leaves no fading corpses (§5.5).
+        vv_pool_get(&ctx->pool, row)->flags |= VV_FLAG_CULLED;
+        fn(ctx, i, ud);
+        vv_end_box(ctx);
+    }
+    if (last < count) { // spacer below
+        vv_box(ctx, (vv_LayoutDecl){ .w = vv_grow(1),
+                                     .h = vv_fixed((float)(count - last) * row_h) },
+               (vv_Style){0});
+        vv_end_box(ctx);
+    }
 }
 
 uint32_t vv_text_keyed(vv_Ctx *ctx, const char *key, size_t klen,

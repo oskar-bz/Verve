@@ -72,6 +72,28 @@ static void apply_wheel(vv_Ctx *ctx, float wheel) {
     }
 }
 
+// Collect focusable node ids in tree (pre-order) for Tab traversal (§11.3).
+static void collect_focusable(vv_NodePool *pool, uint32_t idx, bool disabled,
+                              vv_ID *list, int *n, int cap) {
+    vv_Node *node = vv_pool_get(pool, idx);
+    bool dis = disabled || node->decl.disabled;
+    if (!(node->flags & VV_FLAG_EXITING) && !dis && node->decl.focusable && *n < cap)
+        list[(*n)++] = node->id;
+    for (uint32_t c = node->first_child; c != VV_NIL; c = vv_pool_get(pool, c)->next_sibling)
+        collect_focusable(pool, c, dis, list, n, cap);
+}
+
+static void tab_move(vv_Ctx *ctx, bool backward) {
+    vv_ID list[256]; int n = 0;
+    collect_focusable(&ctx->pool, ctx->root, false, list, &n, 256);
+    if (n == 0) return;
+    int cur = -1;
+    for (int i = 0; i < n; i++) if (list[i] == ctx->focused_id) cur = i;
+    int nxt = cur < 0 ? (backward ? n - 1 : 0)
+                      : ((cur + (backward ? -1 : 1)) % n + n) % n;
+    ctx->focused_id = list[nxt];
+}
+
 void vv_input_process(vv_Ctx *ctx) {
     vv_Vec2 m = ctx->input.mouse;
     bool down = ctx->input.mouse_down;
@@ -115,6 +137,12 @@ void vv_input_process(vv_Ctx *ctx) {
         ctx->active_id = 0;
     }
 
+    // Tab traversal follows tree order (§11.3). Handled here so the next build
+    // reflects the new focus; the focused node walks last frame's tree.
+    for (int i = 0; i < ctx->input.key_count; i++)
+        if (ctx->input.keys[i].key == VV_KEY_TAB)
+            tab_move(ctx, ctx->input.keys[i].shift);
+
     apply_wheel(ctx, ctx->input.wheel);
 
     // Maintain per-node interaction flags for declarative variants (§4.4) and
@@ -153,6 +181,8 @@ void vv_focus(vv_Ctx *ctx, uint32_t index) {
     vv_Node *n = vv_pool_get(&ctx->pool, index);
     if (n) ctx->focused_id = n->id;
 }
+
+void vv_request_focus_next(vv_Ctx *ctx) { ctx->focus_next = true; }
 
 // Note: build code that calls vv_hovered() opts the node out of pure Present
 // tiering; the reconciler flags it (§4.4). Wired when idle mode lands (Phase 10).

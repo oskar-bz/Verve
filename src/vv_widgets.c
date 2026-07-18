@@ -222,6 +222,18 @@ static float measure_prefix(vv_Ctx *ctx, const char *buf, int n, float size) {
     return (float)n * size * 0.5f;
 }
 
+// Byte index whose caret is nearest pointer x (relative to text start).
+static int char_from_x(vv_Ctx *ctx, const char *buf, int len, float size, float x) {
+    if (x <= 0) return 0;
+    float prev = 0;
+    for (int i = 1; i <= len; i++) {
+        float w = measure_prefix(ctx, buf, i, size);
+        if (x < (prev + w) * 0.5f) return i - 1;
+        prev = w;
+    }
+    return len;
+}
+
 static int sel_lo(TextFieldState *s) { return s->cursor < s->anchor ? s->cursor : s->anchor; }
 static int sel_hi(TextFieldState *s) { return s->cursor > s->anchor ? s->cursor : s->anchor; }
 static bool has_sel(TextFieldState *s) { return s->cursor != s->anchor; }
@@ -264,6 +276,13 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
         case VV_KEY_END:   s->cursor = *len; break;
         case VV_KEY_BACKSPACE:
             if (delete_selection(buf, len, s)) { changed = true; }
+            else if (ev.ctrl && s->cursor > 0) {   // delete word before cursor
+                int start = s->cursor;
+                while (start > 0 && buf[start - 1] == ' ') start--;
+                while (start > 0 && buf[start - 1] != ' ') start--;
+                erase_range(buf, len, start, s->cursor);
+                s->cursor = s->anchor = start; changed = true;
+            }
             else if (s->cursor > 0) { erase_range(buf, len, s->cursor - 1, s->cursor);
                                       s->cursor--; s->anchor = s->cursor; changed = true; }
             break;
@@ -313,7 +332,16 @@ bool vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
     TextFieldState *s = vv_state(ctx, id, TextFieldState);
     bool changed = false;
 
-    if (vv_pressed(ctx, id)) { s->cursor = s->anchor = len; vv_focus(ctx, id); }
+    // Mouse: click positions the caret, drag extends the selection. Text starts
+    // at the field's content origin (padding-left).
+    vv_Rect fr = vv_node(ctx, id)->actual_rect;
+    float text_x0 = fr.x + 10.0f;
+    if (vv_pressed(ctx, id)) {
+        vv_focus(ctx, id);
+        s->cursor = s->anchor = char_from_x(ctx, buf, len, size, vv_mouse(ctx).x - text_x0);
+    } else if (vv_active(ctx, id)) {
+        s->cursor = char_from_x(ctx, buf, len, size, vv_mouse(ctx).x - text_x0); // extend
+    }
 
     if (focused) {
         if (ctx->input.text_len > 0) {

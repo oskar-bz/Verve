@@ -76,6 +76,7 @@ typedef struct vv_Ctx {
     bool    mouse_prev_down;
     vv_Vec2 drag_start;
     vv_Vec2 drag_delta;
+    bool    focus_next;   // autofocus the next focusable node built
 
     // Build-time stack.
     uint32_t stack[VV_BUILD_STACK_MAX];
@@ -123,6 +124,15 @@ static inline uint32_t vv_text(vv_Ctx *ctx, const char *utf8, vv_Style s) {
     return vv_text_keyed(ctx, NULL, 0, utf8, s);
 }
 
+// Virtualized rows (§5.5). Consults the enclosing scroll viewport, builds only
+// the visible index range, and emits spacers above/below. Rows scrolled out of
+// view are freed immediately without an exit animation (no fading corpses in a
+// scroll). The tradeoff is identity: culled rows lose animation continuity and
+// retained widget state — right for a spreadsheet, wrong for animating cards.
+// `fn` fills one row's contents; the row box itself is provided.
+void vv_rows(vv_Ctx *ctx, int count, float row_height,
+             void (*fn)(vv_Ctx *ctx, int index, void *ud), void *ud);
+
 // Scoped container: `VV_BOX(ctx, decl, style) { ...children... }`.
 // The loop variable is line-unique so nested VV_BOX blocks don't shadow.
 #define VV_CAT_(a, b) a##b
@@ -148,6 +158,8 @@ bool    vv_active(vv_Ctx *ctx, uint32_t index);   // held with capture
 bool    vv_focused(vv_Ctx *ctx, uint32_t index);
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
+// Focus the next focusable node built this frame (autofocus a field on open).
+void    vv_request_focus_next(vv_Ctx *ctx);
 
 // ---- widget authoring (§14.2) --------------------------------------------
 // Persistent, zeroed-on-first-use per-node state, freed when the node dies.

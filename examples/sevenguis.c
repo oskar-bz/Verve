@@ -277,6 +277,7 @@ static void task_circle(vv_Ctx *c) {
 #define CELL_COLS 6
 static char g_cells[CELL_ROWS][CELL_COLS][32];
 static int  g_edit_r = -1, g_edit_c = -1;
+static bool g_edit_fresh;
 
 static double eval_cell(int r, int c, int depth);
 static double eval_expr(const char *s, int depth) {
@@ -331,21 +332,25 @@ static void task_cells(vv_Ctx *c) {
             char rk[8]; snprintf(rk, sizeof rk, "r%d", r);
             VV_BOX(c, ((vv_LayoutDecl){ .dir = VV_ROW, .gap = 1, .padding = vv_hv(1, 0) }), (vv_Style){0}) {
                 char rl[4]; snprintf(rl, sizeof rl, "%d", r + 1);
-                vv_box_keyed(c, rk, 0, (vv_LayoutDecl){ .w = vv_fixed(36), .h = vv_fixed(28),
+                vv_box_keyed(c, rk, 0, (vv_LayoutDecl){ .w = vv_fixed(36), .h = vv_fixed(34),
                     .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER }, (vv_Style){ .bg = TH->surface_hi });
                 vv_text(c, rl, (vv_Style){ .fg = TH->text_muted, .font_size = 13 });
                 vv_end_box(c);
                 for (int col = 0; col < CELL_COLS; col++) {
                     char ck[12]; snprintf(ck, sizeof ck, "c%d_%d", r, col);
                     bool editing = (g_edit_r == r && g_edit_c == col);
+                    // While editing, the text field supplies its own chrome, so
+                    // the cell drops its border to avoid a doubled outline.
                     uint32_t cell = vv_box_keyed(c, ck, strlen(ck),
-                        (vv_LayoutDecl){ .w = vv_fixed(88), .h = vv_fixed(28), .padding = vv_hv(6, 0),
+                        (vv_LayoutDecl){ .w = vv_fixed(88), .h = vv_fixed(34),
+                            .padding = editing ? vv_all(0) : vv_hv(6, 0),
                             .cross = VV_ALIGN_CENTER, .focusable = true, .clip = true },
-                        (vv_Style){ .bg = editing ? TH->surface_hi : TH->surface,
-                                    .border_width = vv_all(1),
-                                    .border_color = editing ? TH->accent : TH->border });
+                        (vv_Style){ .bg = TH->surface,
+                                    .border_width = editing ? vv_all(0) : vv_all(1),
+                                    .border_color = TH->border });
                     {
                         if (editing) {
+                            if (g_edit_fresh) { vv_request_focus_next(c); g_edit_fresh = false; }
                             char fk[16]; snprintf(fk, sizeof fk, "e%d_%d", r, col);
                             vv_text_field(c, fk, g_cells[r][col], 32, "");
                         } else {
@@ -358,7 +363,7 @@ static void task_cells(vv_Ctx *c) {
                         }
                     }
                     vv_end_box(c);
-                    if (vv_clicked(c, cell)) { g_edit_r = r; g_edit_c = col; }
+                    if (vv_clicked(c, cell)) { g_edit_r = r; g_edit_c = col; g_edit_fresh = true; }
                 }
             }
         }
