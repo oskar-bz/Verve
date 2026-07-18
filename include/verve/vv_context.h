@@ -33,6 +33,12 @@ typedef struct vv_Ctx {
     float    win_w, win_h, dpi_scale;
     float    animation_scale;   // §18 kill switch; 1.0 normal, 0.0 = snap
 
+    // Backend text measurement, used during layout (§8.1, §15). NULL => the
+    // built-in monospace estimate stands in.
+    vv_Vec2 (*measure_text)(void *ud, const char *s, int len,
+                            vv_FontID font, float size, float wrap_width);
+    void    *measure_ud;
+
     bool     idle_mode;         // §4.2 opt-in
     bool     tree_dirty;        // forces a Build tier next frame
     uint32_t unsettled_springs; // Present-tier gate
@@ -66,6 +72,10 @@ void vv_init(vv_Ctx *ctx);
 void vv_shutdown(vv_Ctx *ctx);
 
 void vv_set_window(vv_Ctx *ctx, float w, float h, float dpi_scale);
+void vv_set_measure_fn(vv_Ctx *ctx,
+                       vv_Vec2 (*fn)(void *ud, const char *s, int len,
+                                     vv_FontID font, float size, float wrap_width),
+                       void *ud);
 void vv_set_idle_mode(vv_Ctx *ctx, bool on);
 void vv_set_animation_scale(vv_Ctx *ctx, float scale);
 void vv_invalidate(vv_Ctx *ctx);

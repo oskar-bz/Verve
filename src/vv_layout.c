@@ -1,8 +1,13 @@
+#include "verve/vv_context.h"
+#include "verve/vv_internal.h"
 #include "verve/vv_layout.h"
 #include "verve/vv_node.h"
 
 #include <math.h>
-#include <string.h>
+
+// The context supplying the measure callback for the current layout run. Kept
+// file-local so the recursive passes stay pool-based and terse.
+static vv_Ctx *g_ctx;
 
 // The 4-pass constraint solver (§4.1, §5). Flexbox vocabulary on Flutter-style
 // box constraints: constraints down, sizes up, O(n), stable frame-to-frame.
@@ -41,7 +46,15 @@ static vv_Vec2 builtin_text_measure(const vv_Node *n, float wrap_width) {
 
 static vv_Vec2 measure_leaf(const vv_Node *n, float wrap_width) {
     if (n->measure) return n->measure(n->measure_ud, wrap_width, n);
-    if (n->flags & VV_FLAG_TEXT) return builtin_text_measure(n, wrap_width);
+    if (n->flags & VV_FLAG_TEXT) {
+        if (g_ctx && g_ctx->measure_text) {
+            const char *s = (const char *)n->widget_state;
+            int len = n->widget_state_size ? (int)n->widget_state_size - 1 : 0;
+            float size = n->target.font_size > 0 ? n->target.font_size : 14.0f;
+            return g_ctx->measure_text(g_ctx->measure_ud, s, len, n->target.font, size, wrap_width);
+        }
+        return builtin_text_measure(n, wrap_width);
+    }
     return vv_v2(0, 0);
 }
 
@@ -347,7 +360,12 @@ static void snapshot_prev(vv_NodePool *pool, uint32_t idx) {
         snapshot_prev(pool, c);
 }
 
-void vv_layout_run(vv_NodePool *pool, uint32_t root, vv_Rect window) {
+void vv_layout_run(vv_Ctx *ctx) {
+    vv_NodePool *pool = &ctx->pool;
+    uint32_t root = ctx->root;
+    vv_Rect window = vv_rect(0, 0, ctx->win_w, ctx->win_h);
+    g_ctx = ctx;
+
     snapshot_prev(pool, root);
 
     vv_Node *r = P(root);
@@ -357,4 +375,6 @@ void vv_layout_run(vv_NodePool *pool, uint32_t root, vv_Rect window) {
     pass3_height(pool, root);
     pass4_height(pool, root, window.h);
     position_tree(pool, root);
+
+    g_ctx = NULL;
 }

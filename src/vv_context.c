@@ -33,9 +33,53 @@ void vv_shutdown(vv_Ctx *ctx) {
 void vv_set_window(vv_Ctx *ctx, float w, float h, float dpi_scale) {
     ctx->win_w = w; ctx->win_h = h; ctx->dpi_scale = dpi_scale;
 }
+void vv_set_measure_fn(vv_Ctx *ctx,
+                       vv_Vec2 (*fn)(void *ud, const char *s, int len,
+                                     vv_FontID font, float size, float wrap_width),
+                       void *ud) {
+    ctx->measure_text = fn; ctx->measure_ud = ud;
+}
 void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on; }
 void vv_set_animation_scale(vv_Ctx *ctx, float s)   { ctx->animation_scale = s; }
 void vv_invalidate(vv_Ctx *ctx)                     { ctx->tree_dirty = true; }
+
+// ---- declarative state variants (§4.4, §7.1) -----------------------------
+
+// Overlay a sparse variant onto the base target. A field applies if its
+// presence bit is set OR — as a convenience so users needn't fill the mask for
+// the common case — a color's alpha is non-zero / the transform is non-identity
+// (the sentinel fallback discussed in open question 1a).
+static void overlay_variant(vv_Style *dst, const vv_Style *v) {
+    if (!v) return;
+    uint32_t s = v->set;
+    if ((s & VV_STYLE_BG) || v->bg.a > 0.0f)                     dst->bg = v->bg;
+    if ((s & VV_STYLE_FG) || v->fg.a > 0.0f)                     dst->fg = v->fg;
+    if ((s & VV_STYLE_BORDER_COLOR) || v->border_color.a > 0.0f) dst->border_color = v->border_color;
+    if ((s & VV_STYLE_SHADOW) || v->shadow.color.a > 0.0f)       dst->shadow = v->shadow;
+    if (s & VV_STYLE_RADIUS)       dst->radius = v->radius;
+    if (s & VV_STYLE_BORDER_WIDTH) dst->border_width = v->border_width;
+    if ((s & VV_STYLE_OPACITY) || v->opacity > 0.0f)             dst->opacity = v->opacity;
+    bool has_xform = (s & VV_STYLE_TRANSFORM) ||
+                     v->transform.a != 0.0f || v->transform.b != 0.0f ||
+                     v->transform.c != 0.0f || v->transform.d != 0.0f ||
+                     v->transform.tx != 0.0f || v->transform.ty != 0.0f;
+    if (has_xform) dst->transform = v->transform;
+}
+
+// Fold interaction variants into `target` at build time, while the variant
+// pointers (often stack compound literals, §14.1) are still valid. Order:
+// disabled -> focus -> hover -> active, later winning (§7.1). Interaction flags
+// come from this frame's input pass (last frame's geometry, the §4.5 lag).
+static void resolve_variants(vv_Node *n) {
+    const vv_Style *hover = n->target.hover, *active = n->target.active;
+    const vv_Style *focus = n->target.focus, *disabled = n->target.disabled;
+    if (n->decl.disabled)          overlay_variant(&n->target, disabled);
+    if (n->flags & VV_FLAG_FOCUSED) overlay_variant(&n->target, focus);
+    if (n->flags & VV_FLAG_HOVERED) overlay_variant(&n->target, hover);
+    if (n->flags & VV_FLAG_ACTIVE)  overlay_variant(&n->target, active);
+    // Pointers consumed; Present reads only the resolved target.
+    n->target.hover = n->target.active = n->target.focus = n->target.disabled = NULL;
+}
 
 // ---- build API -----------------------------------------------------------
 
@@ -60,6 +104,7 @@ static uint32_t open_node(vv_Ctx *ctx, const char *key, size_t klen,
     n->seq                = seq;
     n->decl               = decl;
     n->target             = style;
+    resolve_variants(n);  // fold hover/active/focus/disabled into target now
     n->last_touched_frame = ctx->frame_index;
     n->first_child = n->last_child = VV_NIL;
     n->next_sibling = VV_NIL;
@@ -174,7 +219,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 
     // --- Build phase (§4.1 steps 1-5) ---
     reconcile(ctx);
-    vv_layout_run(&ctx->pool, ctx->root, vv_rect(0, 0, ctx->win_w, ctx->win_h));
+    vv_layout_run(ctx);
 
     // --- Present phase (§4.1 steps 6-8) ---
     vv_present(ctx);
