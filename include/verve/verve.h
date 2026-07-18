@@ -9,6 +9,7 @@
 #include "vv_arena.h"
 #include "vv_id.h"
 #include "vv_anim.h"
+#include "vv_color.h"
 #include "vv_layout.h"
 #include "vv_style.h"
 #include "vv_command.h"

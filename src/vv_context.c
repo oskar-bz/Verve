@@ -140,76 +140,6 @@ static void reconcile(vv_Ctx *ctx) {
 
 // ---- present: animate + emit ---------------------------------------------
 
-static void present_node(vv_Ctx *ctx, uint32_t index);
-
-static void emit_rect_for(vv_Ctx *ctx, vv_Node *n) {
-    vv_CommandBuffer *cb = &ctx->cmds;
-    if (cb->count == cb->cap) {
-        uint32_t ncap = cb->cap ? cb->cap * 2 : 256;
-        vv_Command *ni = vv_arena_alloc(&ctx->frame, sizeof(vv_Command) * ncap);
-        if (cb->count) memcpy(ni, cb->items, sizeof(vv_Command) * cb->count);
-        cb->items = ni; cb->cap = ncap;
-    }
-
-    vv_Command *cmd = &cb->items[cb->count++];
-    if (n->flags & VV_FLAG_TEXT) {
-        cmd->kind = VV_CMD_TEXT;
-        cmd->as.text = (vv_CmdText){
-            .utf8  = (const char *)n->widget_state,
-            .len   = n->widget_state_size - 1,
-            .font  = n->target.font,
-            .size  = n->target.font_size > 0 ? n->target.font_size : 14.0f,
-            .color = n->target.fg,
-            .origin = vv_v2(n->actual_rect.x, n->actual_rect.y + 14.0f),
-        };
-        return;
-    }
-
-    cmd->kind = VV_CMD_RECT;
-    cmd->as.rect = (vv_CmdRect){
-        .rect         = n->actual_rect,
-        .radius       = n->target.radius,
-        .fill_a       = n->target.bg,
-        .fill_b       = n->target.bg,
-        .border_width = n->target.border_width,
-        .border_color = n->target.border_color,
-        .shadow       = n->target.shadow,
-    };
-}
-
-static void present_node(vv_Ctx *ctx, uint32_t index) {
-    vv_Node *n = vv_pool_get(&ctx->pool, index);
-
-    // Phase 0: actual_rect snaps to layout_rect. Phase 3 swaps this for FLIP
-    // springs (rx/ry/rw/rh) toward layout_rect.
-    n->actual_rect = n->layout_rect;
-
-    emit_rect_for(ctx, n);
-
-    for (uint32_t c = n->first_child; c != VV_NIL;) {
-        vv_Node *child = vv_pool_get(&ctx->pool, c);
-        uint32_t next  = child->next_sibling;
-        present_node(ctx, c);
-        c = next;
-    }
-}
-
-// Drive exit springs for detached (EXITING) nodes and emit them on top.
-static void present_exiting(vv_Ctx *ctx) {
-    vv_NodePool *p = &ctx->pool;
-    for (uint32_t i = 0; i < p->count; i++) {
-        vv_Node *n = &p->nodes[i];
-        if (!(n->flags & VV_FLAG_ALIVE) || !(n->flags & VV_FLAG_EXITING)) continue;
-        float dt = ctx->animation_scale <= 0.0f ? 1e9f : ctx->dt * ctx->animation_scale;
-        vv_spring_step(&n->exit, dt);
-        if (!n->exit.settled) ctx->unsettled_springs++;
-        // A text leaf's string lives in the (now-reset) frame arena; don't emit
-        // dangling text for a corpse. Phase 5 copies exit text to stable memory.
-        if (n->flags & VV_FLAG_TEXT) continue;
-        emit_rect_for(ctx, n); // draws using last actual_rect
-    }
-}
-
 // ---- frame ---------------------------------------------------------------
 
 void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
@@ -244,8 +174,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
     vv_layout_run(&ctx->pool, ctx->root, vv_rect(0, 0, ctx->win_w, ctx->win_h));
 
     // --- Present phase (§4.1 steps 6-8) ---
-    present_node(ctx, ctx->root);
-    present_exiting(ctx);
+    vv_present(ctx);
 
     ctx->tree_dirty = false;
     ctx->last_tier  = VV_TIER_BUILD;
