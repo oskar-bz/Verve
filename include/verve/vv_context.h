@@ -132,7 +132,13 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx);
 // was processed or this frame's input could produce one — otherwise it just
 // presents (advancing animations). One rebuild per frame (one-frame pipeline);
 // the policy lives entirely here so it can later become a settle loop without
-// touching application code. Returns the command buffer to hand to the backend.
+// touching application code.
+//
+// Returns the command buffer to hand to the backend. Returns NULL when the
+// frame is fully idle (idle mode on, animations settled, no input) — nothing
+// changed on screen, so the caller should skip drawing and buffer-swapping for
+// that frame. Enable idle mode with vv_set_idle_mode to get ~0% CPU on a static
+// UI; with it off, a valid buffer is returned every frame.
 typedef void (*vv_UpdateFn)(void *state, vv_Event ev);
 typedef void (*vv_ViewFn)(vv_Ctx *ctx, void *state);
 

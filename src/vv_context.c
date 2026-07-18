@@ -37,6 +37,10 @@ void vv_shutdown(vv_Ctx *ctx) {
 }
 
 void vv_set_window(vv_Ctx *ctx, float w, float h, float dpi_scale) {
+    // A resize changes layout, so force a rebuild next frame — otherwise idle
+    // mode would keep presenting (or skip) the stale size.
+    if (w != ctx->win_w || h != ctx->win_h || dpi_scale != ctx->dpi_scale)
+        ctx->tree_dirty = true;
     ctx->win_w = w; ctx->win_h = h; ctx->dpi_scale = dpi_scale;
 }
 void vv_set_measure_fn(vv_Ctx *ctx,
@@ -276,7 +280,9 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
 
     vv_arena_reset(&ctx->present);
     ctx->cmds = (vv_CommandBuffer){0};
-    ctx->unsettled_springs = 0;
+    // unsettled_springs is NOT reset here: it carries last frame's animation
+    // state so vv_run_frame can decide whether to idle. It's zeroed just before
+    // each present pass instead (build_begin / present_only).
 
     ctx->wants_build = input_is_interactive(ctx) || ctx->tree_dirty ||
                        ctx->frame_index == 1;
@@ -318,6 +324,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
     vv_layout_run(ctx);
 
     // --- Present phase (§4.1 steps 6-8) ---
+    ctx->unsettled_springs = 0;   // vv_present recounts still-animating springs
     vv_present(ctx);
 
     ctx->tree_dirty = false;
@@ -329,6 +336,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 // and re-emit the existing tree. Used when nothing changed but animations are
 // still running (§4.2). The frame arena is untouched, so node text stays valid.
 static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
+    ctx->unsettled_springs = 0;
     vv_present(ctx);
     ctx->last_tier = VV_TIER_PRESENT;
     return &ctx->cmds;
@@ -359,6 +367,16 @@ vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
         build_begin(ctx);
         if (view) view(ctx, state);
         return vv_end_frame(ctx);
+    }
+
+    // Full idle (§4.2): if idle mode is on and last frame's springs all settled,
+    // there is nothing to animate and no input — skip the present pass entirely
+    // and signal "no redraw" with a NULL buffer so the caller can avoid a draw
+    // and a swap. A static UI then costs ~0% CPU. Without idle mode, present
+    // every frame (simplest, always-fresh).
+    if (ctx->idle_mode && ctx->unsettled_springs == 0) {
+        ctx->last_tier = VV_TIER_IDLE;
+        return NULL;
     }
     return present_only(ctx);
 }

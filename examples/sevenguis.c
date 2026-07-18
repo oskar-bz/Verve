@@ -587,6 +587,7 @@ int main(void) {
   vv_Ctx ctx;
   vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
+  vv_set_idle_mode(&ctx, true); // idle when nothing animates or awaits input
   TH = vv_theme();
 
   App state; app_init(&state);
@@ -610,9 +611,12 @@ int main(void) {
 
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &state);
 
-    vv_app_frame_begin(app, vv_rgb(0.09f, 0.10f, 0.12f));
-    vv_render(vv_app_backend(app), cmds, w, h, dpi);
-    vv_app_frame_end(app);
+    // NULL => fully idle this frame; skip the draw and swap entirely.
+    if (cmds) {
+      vv_app_frame_begin(app, vv_rgb(0.09f, 0.10f, 0.12f));
+      vv_render(vv_app_backend(app), cmds, w, h, dpi);
+      vv_app_frame_end(app);
+    }
   }
   vv_shutdown(&ctx);
   vv_app_destroy(app);

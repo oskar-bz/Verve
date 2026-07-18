@@ -69,6 +69,7 @@ int main(int argc, char **argv) {
 
   vv_Ctx ctx; vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
+  vv_set_idle_mode(&ctx, true); // skip drawing when nothing animates
   TH = vv_theme();
 
   Counter state = {0};
@@ -87,9 +88,12 @@ int main(int argc, char **argv) {
     // The whole loop: drain messages -> update -> conditionally rebuild view.
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &state);
 
-    vv_app_frame_begin(app, vv_rgb(24.f / 255, 24.f / 255, 24.f / 255));
-    vv_render(vv_app_backend(app), cmds, w, h, dpi);
-    vv_app_frame_end(app);
+    // NULL => fully idle this frame; skip the draw and swap entirely.
+    if (cmds) {
+      vv_app_frame_begin(app, vv_rgb(24.f / 255, 24.f / 255, 24.f / 255));
+      vv_render(vv_app_backend(app), cmds, w, h, dpi);
+      vv_app_frame_end(app);
+    }
   }
 
   vv_shutdown(&ctx);
