@@ -119,12 +119,52 @@ uint32_t vv_pool_obtain(vv_NodePool *p, vv_ID id, bool *created) {
     return index;
 }
 
+// ---- widget-state allocator ----------------------------------------------
+
+static uint32_t ws_round(uint32_t size) { return (size + 15u) & ~15u; }
+
+static vv_WSBucket *ws_bucket(vv_NodePool *p, uint32_t size) {
+    for (int i = 0; i < p->ws_count; i++)
+        if (p->ws[i].size == size) return &p->ws[i];
+    if (p->ws_count < VV_WS_BUCKETS) {
+        vv_WSBucket *b = &p->ws[p->ws_count++];
+        b->size = size; b->head = NULL;
+        return b;
+    }
+    return NULL; // out of size classes: fall back to fresh arena allocs
+}
+
+static void *ws_alloc(vv_NodePool *p, uint32_t size) {
+    uint32_t r = ws_round(size);
+    vv_WSBucket *b = ws_bucket(p, r);
+    if (b && b->head) { void *blk = b->head; b->head = *(void **)blk; return blk; }
+    // First few bytes must be able to hold a freelist pointer on release.
+    return vv_arena_alloc(p->persistent, r < sizeof(void *) ? sizeof(void *) : r);
+}
+
+static void ws_free(vv_NodePool *p, void *blk, uint32_t size) {
+    vv_WSBucket *b = ws_bucket(p, ws_round(size));
+    if (!b) return; // leaked into the arena; bounded and rare
+    *(void **)blk = b->head;
+    b->head = blk;
+}
+
+void *vv_pool_state(vv_NodePool *p, uint32_t index, uint32_t size) {
+    vv_Node *n = &p->nodes[index];
+    if (n->widget_state && n->widget_state_size == size) return n->widget_state;
+    if (n->widget_state) ws_free(p, n->widget_state, n->widget_state_size);
+    void *blk = ws_alloc(p, size);
+    memset(blk, 0, size);
+    n->widget_state      = blk;
+    n->widget_state_size = size;
+    return blk;
+}
+
 void vv_pool_free(vv_NodePool *p, uint32_t index) {
     vv_Node *n = &p->nodes[index];
     assert((n->flags & VV_FLAG_ALIVE) && "double free of node");
     map_remove(p, n->id);
-    // widget_state lifetime is handled by the (future) widget-state allocator;
-    // for now it is arena-backed and simply dropped.
+    if (n->widget_state) ws_free(p, n->widget_state, n->widget_state_size);
     n->widget_state      = NULL;
     n->widget_state_size = 0;
     n->flags             = 0;         // clears ALIVE

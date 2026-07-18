@@ -129,4 +129,13 @@ bool    vv_focused(vv_Ctx *ctx, uint32_t index);
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 
+// ---- widget authoring (§14.2) --------------------------------------------
+// Persistent, zeroed-on-first-use per-node state, freed when the node dies.
+// The one genuinely privileged widget call.
+void   *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size);
+#define vv_state(ctx, index, T) ((T *)vv_state_raw((ctx), (index), sizeof(T)))
+
+// Current pointer position (screen space), for widgets doing their own math.
+static inline vv_Vec2 vv_mouse(vv_Ctx *ctx) { return ctx->input.mouse; }
+
 #endif // VV_CONTEXT_H

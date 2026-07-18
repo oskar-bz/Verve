@@ -16,5 +16,6 @@
 #include "vv_node.h"
 #include "vv_backend.h"
 #include "vv_context.h"
+#include "vv_widgets.h"
 
 #endif // VERVE_H

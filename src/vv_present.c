@@ -200,8 +200,8 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
         vv_Command *cmd = push_cmd(ctx);
         cmd->kind = VV_CMD_TEXT;
         cmd->as.text = (vv_CmdText){
-            .utf8   = (const char *)n->widget_state,
-            .len    = n->widget_state_size ? n->widget_state_size - 1 : 0,
+            .utf8   = n->text,
+            .len    = n->text_len,
             .font   = n->target.font,
             .size   = n->target.font_size > 0 ? n->target.font_size : 14.0f,
             .color  = with_alpha(color_read(A->fg), opacity),

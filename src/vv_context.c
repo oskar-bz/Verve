@@ -39,6 +39,9 @@ void vv_set_measure_fn(vv_Ctx *ctx,
                        void *ud) {
     ctx->measure_text = fn; ctx->measure_ud = ud;
 }
+void *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size) {
+    return vv_pool_state(&ctx->pool, index, (uint32_t)size);
+}
 void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on; }
 void vv_set_animation_scale(vv_Ctx *ctx, float s)   { ctx->animation_scale = s; }
 void vv_invalidate(vv_Ctx *ctx)                     { ctx->tree_dirty = true; }
@@ -149,9 +152,8 @@ uint32_t vv_text_keyed(vv_Ctx *ctx, const char *key, size_t klen,
 
     uint32_t idx = open_node(ctx, key, klen, decl, style);
     vv_Node *n = vv_pool_get(&ctx->pool, idx);
-    // Stash the frame-arena string pointer in widget_state for the emitter.
-    n->widget_state      = copy;
-    n->widget_state_size = (uint32_t)(len + 1);
+    n->text     = copy;
+    n->text_len = (uint32_t)len;
     n->flags |= VV_FLAG_TEXT;
     return idx;
 }

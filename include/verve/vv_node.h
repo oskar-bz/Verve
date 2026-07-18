@@ -47,6 +47,11 @@ typedef struct vv_Node {
     void    *widget_state;
     uint32_t widget_state_size;
 
+    // Text leaves stash their frame-arena string copy here (separate from
+    // widget_state, which the freelist allocator owns).
+    const char *text;
+    uint32_t    text_len;
+
     // Leaf measurement (§14.2 item 4, §15). Composite nodes derive size from
     // children; a leaf either uses FIXED sizes or installs a measure callback.
     // Returns the content size given a wrap width (height-for-width, §5.3).
@@ -68,6 +73,11 @@ typedef struct {
     uint32_t index;   // pool index
 } vv_MapSlot;
 
+// Size-bucketed freelist for widget_state so a dead node's state returns for
+// reuse without malloc (§13, §14.2). Blocks are rounded to a size class.
+#define VV_WS_BUCKETS 24
+typedef struct { uint32_t size; void *head; } vv_WSBucket;
+
 typedef struct vv_NodePool {
     vv_Node *nodes;
     uint32_t count;      // high-water mark of allocated slots
@@ -77,6 +87,9 @@ typedef struct vv_NodePool {
     vv_MapSlot *map;     // open-addressing ID -> index
     uint32_t    map_cap; // power of two
     uint32_t    map_len; // live entries
+
+    vv_WSBucket ws[VV_WS_BUCKETS];
+    int         ws_count;
 
     vv_Arena *persistent; // backing store for pool + widget_state
 } vv_NodePool;
@@ -91,6 +104,11 @@ uint32_t  vv_pool_obtain(vv_NodePool *p, vv_ID id, bool *created);
 
 // Free a node slot and its widget_state, remove from map.
 void      vv_pool_free(vv_NodePool *p, uint32_t index);
+
+// Persistent per-node state (§14.2). Zeroed on first use; kept across frames;
+// returned to the freelist when the node dies. Returns the same block each
+// frame for a given (node, size).
+void     *vv_pool_state(vv_NodePool *p, uint32_t index, uint32_t size);
 
 static inline vv_Node *vv_pool_get(vv_NodePool *p, uint32_t index) {
     return index == VV_NIL ? NULL : &p->nodes[index];

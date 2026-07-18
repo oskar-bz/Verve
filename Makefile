@@ -2,6 +2,7 @@
 CC       := clang
 CFLAGS   ?= -std=c11 -Iinclude -Wall -Wextra -Wshadow -Wconversion -g -O2 \
             -fno-omit-frame-pointer
+DEPFLAGS := -MMD -MP
 LDFLAGS  ?=
 LDLIBS   ?= -lm
 
@@ -35,7 +36,9 @@ $(LIB): $(OBJ)
 
 $(BUILD)/%.o: src/%.c
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+
+-include $(OBJ:.o=.d)
 
 $(BUILD)/%: tests/%.c $(LIB)
 	@mkdir -p $(BUILD)

@@ -14,7 +14,10 @@ static void hit_test(vv_NodePool *pool, uint32_t idx, vv_Vec2 p,
     vv_Node *n = vv_pool_get(pool, idx);
     bool dis = disabled || n->decl.disabled;
 
-    if (!(n->flags & VV_FLAG_EXITING) && !dis && vv_rect_contains(n->actual_rect, p))
+    // Text is decorative and pass-through, so a label inside a button doesn't
+    // steal the button's hit.
+    if (!(n->flags & (VV_FLAG_EXITING | VV_FLAG_TEXT)) && !dis &&
+        vv_rect_contains(n->actual_rect, p))
         *out = n->id;   // later writer wins => topmost
 
     // Clip: children outside a clipping rect can't be hit.
@@ -30,6 +33,25 @@ static vv_Node *by_id(vv_Ctx *ctx, vv_ID id) {
     if (!id) return NULL;
     uint32_t idx = vv_pool_find(&ctx->pool, id);
     return idx == VV_NIL ? NULL : vv_pool_get(&ctx->pool, idx);
+}
+
+// Resolve a raw topmost hit to its interaction target: the nearest focusable
+// node at or above it, so a click on a widget's decorative child (a knob, an
+// icon) routes to the widget. Falls back to the topmost if nothing focusable.
+static vv_ID interactive_target(vv_Ctx *ctx, vv_ID topmost) {
+    uint32_t idx = topmost ? vv_pool_find(&ctx->pool, topmost) : VV_NIL;
+    while (idx != VV_NIL) {
+        vv_Node *n = &ctx->pool.nodes[idx];
+        if (n->decl.focusable) return n->id;
+        idx = n->parent;
+    }
+    return topmost;
+}
+
+static vv_ID hit_target(vv_Ctx *ctx, vv_Vec2 p) {
+    vv_ID hit = 0;
+    hit_test(&ctx->pool, ctx->root, p, false, &hit);
+    return interactive_target(ctx, hit);
 }
 
 // Route wheel to the hovered node or its nearest scrolling ancestor.
@@ -64,9 +86,7 @@ void vv_input_process(vv_Ctx *ctx) {
         // captured: hover reflects capture target for styling continuity
         ctx->hovered_id = ctx->active_id;
     } else {
-        vv_ID hit = 0;
-        hit_test(&ctx->pool, ctx->root, m, false, &hit);
-        ctx->hovered_id = hit;
+        ctx->hovered_id = hit_target(ctx, m);
     }
 
     // 2) Press edge.
@@ -90,9 +110,7 @@ void vv_input_process(vv_Ctx *ctx) {
 
     // 4) Release edge: click iff release lands on the captured node.
     if (!down && was) {
-        vv_ID topmost = 0;
-        hit_test(&ctx->pool, ctx->root, m, false, &topmost);
-        if (ctx->active_id && topmost == ctx->active_id)
+        if (ctx->active_id && hit_target(ctx, m) == ctx->active_id)
             ctx->clicked_id = ctx->active_id;
         ctx->active_id = 0;
     }

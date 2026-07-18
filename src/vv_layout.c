@@ -31,8 +31,8 @@ static float clamp_size(vv_Size s, float v) {
 // Built-in text estimate until the backend measure callback lands (Phase 5).
 // Roughly monospace-ish; good enough to exercise wrapping and height-for-width.
 static vv_Vec2 builtin_text_measure(const vv_Node *n, float wrap_width) {
-    const char *s = (const char *)n->widget_state;
-    uint32_t len = n->widget_state_size ? n->widget_state_size - 1 : 0;
+    const char *s = n->text;
+    uint32_t len = n->text_len;
     float size = n->target.font_size > 0 ? n->target.font_size : 14.0f;
     float adv  = size * 0.5f;          // per-glyph advance estimate
     float line_h = size * 1.25f;
@@ -48,8 +48,8 @@ static vv_Vec2 measure_leaf(const vv_Node *n, float wrap_width) {
     if (n->measure) return n->measure(n->measure_ud, wrap_width, n);
     if (n->flags & VV_FLAG_TEXT) {
         if (g_ctx && g_ctx->measure_text) {
-            const char *s = (const char *)n->widget_state;
-            int len = n->widget_state_size ? (int)n->widget_state_size - 1 : 0;
+            const char *s = n->text;
+            int len = (int)n->text_len;
             float size = n->target.font_size > 0 ? n->target.font_size : 14.0f;
             return g_ctx->measure_text(g_ctx->measure_ud, s, len, n->target.font, size, wrap_width);
         }
