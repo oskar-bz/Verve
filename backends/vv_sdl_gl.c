@@ -451,8 +451,84 @@ static vv_Key map_key(SDL_Keycode k) {
     }
 }
 
+// ---- optional framebuffer capture (VV_SHOT=path) -------------------------
+// A dependency-free PNG writer (stored/deflate blocks) so screenshots need no
+// image library. Used only when VV_SHOT is set — a dev/CI convenience.
+static uint32_t vv__crc32(const unsigned char *p, size_t n, uint32_t crc) {
+    crc = ~crc;
+    for (size_t i = 0; i < n; i++) {
+        crc ^= p[i];
+        for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int)(crc & 1)));
+    }
+    return ~crc;
+}
+static void vv__put32(unsigned char *b, uint32_t v) { b[0]=v>>24; b[1]=v>>16; b[2]=v>>8; b[3]=v; }
+
+static void vv__png_chunk(FILE *f, const char *type, const unsigned char *data, uint32_t len) {
+    unsigned char hdr[8]; vv__put32(hdr, len); memcpy(hdr + 4, type, 4);
+    fwrite(hdr, 1, 8, f);
+    if (len) fwrite(data, 1, len, f);
+    // CRC covers type + data.
+    unsigned char *tmp = malloc(4 + len); memcpy(tmp, type, 4); if (len) memcpy(tmp + 4, data, len);
+    uint32_t crc = vv__crc32(tmp, 4 + len, 0); free(tmp);
+    unsigned char cb[4]; vv__put32(cb, crc); fwrite(cb, 1, 4, f);
+}
+
+// rgba is bottom-up (GL order); write it flipped to a top-down PNG.
+static void vv__write_png(const char *path, int w, int h, const unsigned char *rgba) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    fwrite("\x89PNG\r\n\x1a\n", 1, 8, f);
+    unsigned char ihdr[13];
+    vv__put32(ihdr, (uint32_t)w); vv__put32(ihdr + 4, (uint32_t)h);
+    ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = ihdr[11] = ihdr[12] = 0; // 8-bit RGBA
+    vv__png_chunk(f, "IHDR", ihdr, 13);
+
+    size_t stride = (size_t)w * 4, raw_len = (stride + 1) * (size_t)h;
+    unsigned char *raw = malloc(raw_len);
+    for (int y = 0; y < h; y++) {
+        raw[y * (stride + 1)] = 0; // filter: none
+        memcpy(raw + y * (stride + 1) + 1, rgba + (size_t)(h - 1 - y) * stride, stride);
+    }
+    // zlib stream: header + stored deflate blocks + adler32
+    size_t zcap = raw_len + raw_len / 65535 * 5 + 32;
+    unsigned char *z = malloc(zcap); size_t zn = 0;
+    z[zn++] = 0x78; z[zn++] = 0x01;
+    size_t off = 0; uint32_t s1 = 1, s2 = 0;
+    while (off < raw_len) {
+        size_t blk = raw_len - off; if (blk > 65535) blk = 65535;
+        z[zn++] = (off + blk >= raw_len) ? 1 : 0;
+        z[zn++] = blk & 0xFF; z[zn++] = (blk >> 8) & 0xFF;
+        z[zn++] = ~blk & 0xFF; z[zn++] = (~blk >> 8) & 0xFF;
+        for (size_t i = 0; i < blk; i++) { z[zn++] = raw[off + i]; s1 = (s1 + raw[off + i]) % 65521; s2 = (s2 + s1) % 65521; }
+        off += blk;
+    }
+    unsigned char adl[4]; vv__put32(adl, (s2 << 16) | s1);
+    memcpy(z + zn, adl, 4); zn += 4;
+    vv__png_chunk(f, "IDAT", z, (uint32_t)zn);
+    vv__png_chunk(f, "IEND", NULL, 0);
+    free(z); free(raw); fclose(f);
+}
+
+static Uint64 vv__shot_t0 = 0;
+static bool   vv__shot_done = false;
+
+static void vv__capture(vv_App *a, const char *path) {
+    vv_app_size(a, NULL, NULL, NULL);
+    int w = a->fb_w, h = a->fb_h;
+    unsigned char *px = malloc((size_t)w * h * 4);
+    glReadBuffer(GL_BACK);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    vv__write_png(path, w, h, px);
+    free(px);
+    fprintf(stderr, "[vv] wrote %s (%dx%d)\n", path, w, h);
+}
+
 bool vv_app_pump(vv_App *a, vv_Input *in) {
-    (void)a; // single-window: SDL events aren't window-filtered yet
+    (void)a;
+    // Screenshot mode: quit once frame_end has captured the settled frame.
+    if (getenv("VV_SHOT") && vv__shot_done) return false;
     SDL_Event e;
     in->wheel = 0;
     in->text_len = 0; in->text[0] = 0;
@@ -503,4 +579,15 @@ void vv_app_frame_begin(vv_App *a, vv_Color clear) {
     glClear(GL_COLOR_BUFFER_BIT);
 }
 
-void vv_app_frame_end(vv_App *a) { SDL_GL_SwapWindow(a->win); }
+void vv_app_frame_end(vv_App *a) {
+    // Capture the freshly-rendered back buffer after enough frames that the enter
+    // animation has settled, then signal quit via the pump. Runs only under
+    // VV_SHOT. Counting frames (not wall-clock) survives idle mode stopping the
+    // render loop before a time threshold would be hit.
+    const char *shot = getenv("VV_SHOT");
+    if (shot && !vv__shot_done && ++vv__shot_t0 >= 90) {
+        vv__capture(a, shot);
+        vv__shot_done = true;
+    }
+    SDL_GL_SwapWindow(a->win);
+}

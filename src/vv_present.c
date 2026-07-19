@@ -243,22 +243,21 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
 
 // Overlay scrollbar thumbs for a scroll container, painted on top of its
 // (clipped) content and un-clipped themselves. Length encodes the visible
-// fraction; position encodes the scroll offset. Drawn only when the axis
-// overflows. A minimal, always-visible indicator — no track, no hit region.
+// fraction, position the scroll offset. The thumb fades with scroll_activity,
+// so it shows while scrolling/dragging and melts away when the view is still.
 static void emit_scrollbar(vv_Ctx *ctx, vv_Node *n, float inh) {
+    float a = n->scroll_activity;
+    if (a <= 0.01f) return;
     const float W = 6.0f, M = 2.0f, MIN = 28.0f;
     vv_Rect v = n->actual_rect;
-    vv_Color thumb = with_alpha(vv_rgba(1, 1, 1, 0.28f), inh);
+    vv_Color thumb = with_alpha(vv_rgba(1, 1, 1, 0.34f * a), inh);
 
-    if (n->scroll_max_y > 0.5f && v.h > 0.0f) {
-        float content = v.h + n->scroll_max_y;
-        float len = vv_clampf(v.h * v.h / content, MIN, v.h);
-        float frac = vv_clampf(n->scroll_y.x / n->scroll_max_y, 0.0f, 1.0f);
+    vv_Rect tv;
+    if (vv_scrollbar_thumb_v(n, &tv)) { // shared geometry with input hit-testing
         vv_Command *c = push_cmd(ctx);
         c->kind = VV_CMD_RECT;
-        c->as.rect = (vv_CmdRect){
-            .rect = vv_rect(v.x + v.w - W - M, v.y + frac * (v.h - len), W, len),
-            .radius = vv_r(W * 0.5f), .fill_a = thumb, .fill_b = thumb };
+        c->as.rect = (vv_CmdRect){ .rect = tv, .radius = vv_r(W * 0.5f),
+                                   .fill_a = thumb, .fill_b = thumb };
     }
     if (n->scroll_max_x > 0.5f && v.w > 0.0f) {
         float content = v.w + n->scroll_max_x;
@@ -288,6 +287,7 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
         vv_spring_init(&n->exit, 1.0f, VV_DEFAULT_SPRING);
         vv_spring_init(&n->scroll_x, 0.0f, VV_SMOOTH);
         vv_spring_init(&n->scroll_y, 0.0f, VV_SMOOTH);
+        n->scroll_activity = 0.0f;
         vv_spring_retarget(&n->enter, 1.0f);
     } else {
         style_retarget(n);
@@ -306,6 +306,16 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
     vv_spring_retarget(&n->scroll_y, vv_clampf(n->scroll_y.target, 0, n->scroll_max_y));
     step1(ctx, &n->scroll_x, dt);
     step1(ctx, &n->scroll_y, dt);
+
+    // Scrollbar fade: bright while the offset moves or the thumb is dragged, then
+    // decays. Keep the frame unsettled while it fades so idle mode lets it finish.
+    if (n->decl.scroll_x || n->decl.scroll_y) {
+        bool moving = fabsf(n->scroll_x.v) > 1.0f || fabsf(n->scroll_y.v) > 1.0f;
+        if (moving || n->id == ctx->sb_drag) n->scroll_activity = 1.0f;
+        else n->scroll_activity -= dt * 3.0f;
+        if (n->scroll_activity < 0.0f) n->scroll_activity = 0.0f;
+        if (n->scroll_activity > 0.01f) ctx->unsettled_springs++;
+    }
 
     bool clips = n->decl.clip || n->decl.scroll_x || n->decl.scroll_y;
     if (clips) { push_cmd(ctx)->kind = VV_CMD_SCISSOR_PUSH; ctx->cmds.items[ctx->cmds.count-1].as.scissor = n->actual_rect; }

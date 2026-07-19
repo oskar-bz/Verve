@@ -94,6 +94,21 @@ static void tab_move(vv_Ctx *ctx, bool backward) {
     ctx->focused_id = list[nxt];
 }
 
+// Topmost scroll container whose (widened) scrollbar thumb contains `p`. Sets
+// *grab to the pointer's offset within the thumb so dragging tracks 1:1.
+static vv_ID hit_scrollbar(vv_Ctx *ctx, vv_Vec2 p, float *grab) {
+    vv_ID found = 0;
+    for (uint32_t i = 0; i < ctx->pool.count; i++) {
+        vv_Node *n = &ctx->pool.nodes[i];
+        if (!(n->flags & VV_FLAG_ALIVE) || (n->flags & VV_FLAG_EXITING)) continue;
+        vv_Rect thumb;
+        if (!vv_scrollbar_thumb_v(n, &thumb)) continue;
+        vv_Rect hit = vv_rect(thumb.x - 8, thumb.y, thumb.w + 12, thumb.h); // easier grab
+        if (vv_rect_contains(hit, p)) { *grab = p.y - thumb.y; found = n->id; }
+    }
+    return found; // last (topmost) match wins
+}
+
 void vv_input_process(vv_Ctx *ctx) {
     vv_Vec2 m = ctx->input.mouse;
     bool down = ctx->input.mouse_down;
@@ -104,36 +119,64 @@ void vv_input_process(vv_Ctx *ctx) {
     ctx->double_clicked_id = 0;
 
     // 1) Hover: fresh hit test against last frame's geometry. While a node is
-    // captured (active), it keeps the pointer regardless of position (§11.2).
-    if (ctx->active_id && down) {
+    // captured (active) or a scrollbar thumb is being dragged, the pointer stays
+    // with the captor regardless of position (§11.2).
+    if (ctx->sb_drag && down) {
+        ctx->hovered_id = ctx->sb_drag;
+    } else if (ctx->active_id && down) {
         // captured: hover reflects capture target for styling continuity
         ctx->hovered_id = ctx->active_id;
     } else {
         ctx->hovered_id = hit_target(ctx, m);
     }
 
-    // 2) Press edge.
+    // 2) Press edge. A press on a scrollbar thumb starts a thumb drag instead of
+    // the normal capture, so the content underneath isn't clicked/selected.
     if (down && !was) {
-        ctx->active_id  = ctx->hovered_id;   // capture
-        ctx->pressed_id = ctx->hovered_id;
-        ctx->drag_start = m;
-        ctx->drag_delta = vv_v2(0, 0);
-        // Focus follows press on focusable nodes; else focus clears.
-        vv_Node *hn = by_id(ctx, ctx->hovered_id);
-        if (hn && hn->decl.focusable && !hn->decl.disabled)
-            ctx->focused_id = hn->id;
-        else if (hn)
-            ctx->focused_id = 0;
+        float grab = 0.0f;
+        vv_ID sb = hit_scrollbar(ctx, m, &grab);
+        if (sb) {
+            ctx->sb_drag = sb;
+            ctx->sb_grab = grab;
+        } else {
+            ctx->active_id  = ctx->hovered_id;   // capture
+            ctx->pressed_id = ctx->hovered_id;
+            ctx->drag_start = m;
+            ctx->drag_delta = vv_v2(0, 0);
+            // Focus follows press on focusable nodes; else focus clears.
+            vv_Node *hn = by_id(ctx, ctx->hovered_id);
+            if (hn && hn->decl.focusable && !hn->decl.disabled)
+                ctx->focused_id = hn->id;
+            else if (hn)
+                ctx->focused_id = 0;
+        }
     }
 
-    // 3) Drag while held.
+    // 3a) Scrollbar thumb drag: map the pointer to a scroll offset, tracking 1:1.
+    if (down && ctx->sb_drag) {
+        vv_Node *n = by_id(ctx, ctx->sb_drag);
+        vv_Rect thumb;
+        if (n && vv_scrollbar_thumb_v(n, &thumb)) {
+            float avail = n->actual_rect.h - thumb.h;
+            float top = m.y - ctx->sb_grab;
+            float frac = avail > 0 ? vv_clampf((top - n->actual_rect.y) / avail, 0, 1) : 0;
+            float t = frac * n->scroll_max_y;
+            vv_spring_retarget(&n->scroll_y, t);
+            n->scroll_y.x = t; n->scroll_y.v = 0; // snap for a direct grab feel
+            n->scroll_activity = 1.0f;
+        }
+    }
+
+    // 3b) Drag while held (normal capture).
     if (down && ctx->active_id) {
         ctx->drag_delta = vv_v2(m.x - ctx->drag_start.x, m.y - ctx->drag_start.y);
     }
 
     // 4) Release edge: click iff release lands on the captured node. A second
     // click on the same node within the window is a double-click (§11).
-    if (!down && was) {
+    if (!down && was && ctx->sb_drag) {
+        ctx->sb_drag = 0; // end thumb drag; no click semantics
+    } else if (!down && was) {
         if (ctx->active_id && hit_target(ctx, m) == ctx->active_id) {
             ctx->clicked_id = ctx->active_id;
             const float VV_DOUBLE_CLICK_S = 0.35f;

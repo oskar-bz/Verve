@@ -73,6 +73,7 @@ typedef struct vv_Node {
     // subtracted from child positions. Content extents are measured in layout.
     vv_Spring scroll_x, scroll_y;
     float     scroll_max_x, scroll_max_y;
+    float     scroll_activity; // 1 while scrolling/dragging, decays -> scrollbar fade
 } vv_Node;
 
 typedef struct {

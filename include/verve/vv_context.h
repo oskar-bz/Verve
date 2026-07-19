@@ -83,6 +83,8 @@ typedef struct vv_Ctx {
     vv_Vec2 mouse_prev;   // last frame's pointer, to detect movement (idle gate)
     vv_Vec2 drag_start;
     vv_Vec2 drag_delta;
+    vv_ID   sb_drag;      // scroll container whose scrollbar thumb is being dragged
+    float   sb_grab;      // pointer y minus thumb top at grab, for 1:1 tracking
     bool    focus_next;   // autofocus the next focusable node built
 
     // Message queue (§ message-driven UI). Emitted during view(), drained by the

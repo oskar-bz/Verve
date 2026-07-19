@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ROOT_ID ((vv_ID)0x9e3779b97f4a7c15ULL)
@@ -52,7 +53,9 @@ void vv_set_measure_fn(vv_Ctx *ctx,
 void *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size) {
     return vv_pool_state(&ctx->pool, index, (uint32_t)size);
 }
-void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on; }
+// Screenshot mode (VV_SHOT) forces continuous rendering so a capture harness
+// can grab a settled frame instead of the loop going idle mid-animation.
+void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on && !getenv("VV_SHOT"); }
 void vv_set_animation_scale(vv_Ctx *ctx, float s)   { ctx->animation_scale = s; }
 void vv_invalidate(vv_Ctx *ctx)                     { ctx->tree_dirty = true; }
 
@@ -307,7 +310,7 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
 
     ctx->wants_build =
         ctx->hovered_id != prev_hover || ctx->focused_id != prev_focus ||
-        down_edge || moved_sub || ctx->active_id != 0 ||
+        down_edge || moved_sub || ctx->active_id != 0 || ctx->sb_drag != 0 ||
         ctx->input.wheel != 0.0f || ctx->input.key_count > 0 ||
         ctx->input.text_len > 0 || ctx->tree_dirty || ctx->frame_index == 1;
 }
