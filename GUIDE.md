@@ -473,5 +473,10 @@ Minimal wiring for any backend:
 | The full architecture & rationale | `verve-design.md` |
 | A minimal end-to-end app | `examples/mycounter.c` |
 | A bigger app (7GUIs tasks) | `examples/sevenguis.c` |
+| Drag & drop with FLIP-spring reorder | `examples/kanban.c` |
+| Perceptual color (OKLab, contrast, ramps) | `examples/palette.c` |
+| Per-node color springs over a big grid | `examples/habit.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
+
+Run any of the windowed demos with `make gui` then `./build/<name>`.

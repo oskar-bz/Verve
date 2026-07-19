@@ -52,7 +52,8 @@ demo: $(DEMO_BIN)
 
 # Windowed examples share the SDL3/GL backend build (explicit, not pattern, to
 # avoid clashing with the headless examples rule).
-gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter
+gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD)/kanban \
+     $(BUILD)/palette $(BUILD)/habit
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -60,6 +61,15 @@ $(BUILD)/sevenguis: examples/sevenguis.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/mycounter: examples/mycounter.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/kanban: examples/kanban.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/palette: examples/palette.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/habit: examples/habit.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 
