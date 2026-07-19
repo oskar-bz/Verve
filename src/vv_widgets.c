@@ -839,7 +839,7 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
 // reports drags. We capture the size at grab (per-node vv_state) and emit
 // grab_size + drag_delta so tracking is 1:1 regardless of pointer acceleration.
 
-uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir,
+uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir, bool trailing,
                      float size, float min, float max, vv_Msg resize) {
   const vv_Theme *t = vv_theme();
   bool horiz = (dir == VV_ROW);
@@ -854,7 +854,9 @@ uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir,
   if (vv_pressed(ctx, id)) *grab = size;
   if (vv_active(ctx, id)) {
     vv_Vec2 dd = vv_drag_delta(ctx, id);
-    float v = *grab + (horiz ? dd.x : dd.y);
+    float along = horiz ? dd.x : dd.y;
+    // A trailing pane (right/bottom dock) shrinks as the divider moves toward it.
+    float v = *grab + (trailing ? -along : along);
     if (v < min) v = min;
     if (v > max) v = max;
     vv_emit(ctx, resize, vv_pf(v));
@@ -911,7 +913,7 @@ void vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at) {
   const vv_Theme *t = vv_theme();
   // Scrim: full-window catch so a click or Escape anywhere else dismisses.
   uint32_t scrim = vv_box_keyed(ctx, "__menuscrim", 11,
-                                (vv_LayoutDecl){.has_absolute = true,
+                                (vv_LayoutDecl){.has_absolute = true, .z = VV_Z_MENU,
                                                 .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)},
                                 (vv_Style){.bg = {0}});
   if (vv_pressed(ctx, scrim)) g_open_menu = 0;
@@ -922,7 +924,7 @@ void vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at) {
   vv_box_keyed(ctx, key, strlen(key),
                (vv_LayoutDecl){.dir = VV_COLUMN, .w = vv_fixed(220),
                                .padding = vv_all(5), .gap = 1,
-                               .has_absolute = true,
+                               .has_absolute = true, .z = VV_Z_MENU,
                                .absolute = vv_rect(at.x, at.y + 2, 220, 0)},
                (vv_Style){.bg = t->surface_hi,
                           .radius = vv_r(8),
@@ -964,22 +966,14 @@ void vv_menu_separator(vv_Ctx *ctx) {
 
 void vv_menu_end(vv_Ctx *ctx) { vv_end_box(ctx); }
 
-void vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
-                      vv_Msg close) {
+// Shared panel: a floating box anchored at `at`. Callers build the dismiss scrim
+// first (so it sits below the panel) with their own close behavior.
+static void popover_panel(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width) {
   const vv_Theme *t = vv_theme();
-  uint32_t scrim = vv_box_keyed(ctx, "__povscrim", 10,
-                                (vv_LayoutDecl){.has_absolute = true,
-                                                .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)},
-                                (vv_Style){.bg = {0}});
-  if (vv_pressed(ctx, scrim)) vv_emit(ctx, close, VV_NO_PAYLOAD);
-  vv_end_box(ctx);
-  for (int i = 0; i < ctx->input.key_count; i++)
-    if (ctx->input.keys[i].key == VV_KEY_ESCAPE) vv_emit(ctx, close, VV_NO_PAYLOAD);
-
   vv_box_keyed(ctx, key, strlen(key),
                (vv_LayoutDecl){.dir = VV_COLUMN, .w = vv_fixed(width),
                                .padding = vv_all(14), .gap = 10,
-                               .has_absolute = true,
+                               .has_absolute = true, .z = VV_Z_POPOVER,
                                .absolute = vv_rect(at.x, at.y, width, 0)},
                (vv_Style){.bg = t->surface_hi,
                           .radius = vv_r(10),
@@ -987,6 +981,32 @@ void vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
                           .border_color = t->border,
                           .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
                                      .offset = vv_v2(0, 8), .blur = 22, .spread = 2}});
+}
+static uint32_t popover_scrim(vv_Ctx *ctx) {
+  return vv_box_keyed(ctx, "__povscrim", 10,
+                      (vv_LayoutDecl){.has_absolute = true, .z = VV_Z_POPOVER,
+                                      .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)},
+                      (vv_Style){.bg = {0}});
+}
+static bool escape_pressed(vv_Ctx *ctx) {
+  for (int i = 0; i < ctx->input.key_count; i++)
+    if (ctx->input.keys[i].key == VV_KEY_ESCAPE) return true;
+  return false;
+}
+
+void vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
+                      vv_Msg close) {
+  uint32_t scrim = popover_scrim(ctx);
+  if (vv_pressed(ctx, scrim) || escape_pressed(ctx)) vv_emit(ctx, close, VV_NO_PAYLOAD);
+  vv_end_box(ctx);
+  popover_panel(ctx, key, at, width);
+}
+void vv_popover_open(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
+                     bool *open) {
+  uint32_t scrim = popover_scrim(ctx);
+  if (vv_pressed(ctx, scrim) || escape_pressed(ctx)) *open = false;
+  vv_end_box(ctx);
+  popover_panel(ctx, key, at, width);
 }
 void vv_popover_end(vv_Ctx *ctx) { vv_end_box(ctx); }
 
@@ -1004,7 +1024,7 @@ void vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text) {
   float tx = r.x, ty = r.y + r.h + 6.0f;
   vv_box_keyed(ctx, vv_fmt(ctx, "__tip%u", target_id), 0,
                (vv_LayoutDecl){.padding = vv_hv(9, 5),
-                               .has_absolute = true,
+                               .has_absolute = true, .z = VV_Z_TOOLTIP,
                                .absolute = vv_rect(tx, ty, 0, 0)},
                (vv_Style){.bg = vv_rgb(0.06f, 0.07f, 0.09f),
                           .radius = vv_r(6),

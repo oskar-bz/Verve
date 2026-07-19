@@ -30,10 +30,8 @@ static void update(void *st, vv_Event ev) {
   App *a = st;
   switch (ev.msg) {
   case MSG_LEFT:   a->left_w   = clampf((float)ev.data.as_float, 140, 460); break;
-  // Right pane is trailing: the splitter tracks -right_w (see view), so negate.
-  case MSG_RIGHT:  a->right_w  = clampf(-(float)ev.data.as_float, 160, 520); break;
-  // Bottom pane is trailing too: splitter tracks -bottom_h, so negate.
-  case MSG_BOTTOM: a->bottom_h = clampf(-(float)ev.data.as_float, 80, 420);  break;
+  case MSG_RIGHT:  a->right_w  = clampf((float)ev.data.as_float, 160, 520); break;
+  case MSG_BOTTOM: a->bottom_h = clampf((float)ev.data.as_float, 80, 420);  break;
   case MSG_RESET_L: a->left_w = LEFT0;   break;
   case MSG_RESET_R: a->right_w = RIGHT0; break;
   case MSG_RESET_B: a->bottom_h = BOTTOM0; break;
@@ -51,8 +49,8 @@ static void panel_header(vv_Ctx *c, const char *title) {
   }
 }
 
-// The inspector reads the bottom size so the divider positions agree; for the
-// right splitter we resize from the *right* edge, so we negate the drag.
+// Trailing panes (the right inspector, the bottom terminal) pass trailing=true
+// so a drag toward them shrinks them — no sign juggling in the caller.
 static void view(vv_Ctx *c, void *st) {
   App *a = st;
   const vv_Theme *t = vv_theme();
@@ -72,7 +70,7 @@ static void view(vv_Ctx *c, void *st) {
           vv_list_item(c, files[i], files[i], i == 0, MSG_EDIT, VV_NO_PAYLOAD);
       }
     }
-    if (vv_double_clicked(c, vv_splitter(c, "sl", VV_ROW, a->left_w, 140, 460, MSG_LEFT)))
+    if (vv_double_clicked(c, vv_splitter(c, "sl", VV_ROW, false, a->left_w, 140, 460, MSG_LEFT)))
       vv_emit(c, MSG_RESET_L, VV_NO_PAYLOAD);
 
     // -- center column: editor over a bottom panel --------------------------
@@ -86,7 +84,7 @@ static void view(vv_Ctx *c, void *st) {
           vv_text_area(c, "code", a->code, (int)sizeof a->code, 0, NULL, MSG_EDIT);
         }
       }
-      if (vv_double_clicked(c, vv_splitter(c, "sb", VV_COLUMN, -a->bottom_h, -420, -80, MSG_BOTTOM)))
+      if (vv_double_clicked(c, vv_splitter(c, "sb", VV_COLUMN, true, a->bottom_h, 80, 420, MSG_BOTTOM)))
         vv_emit(c, MSG_RESET_B, VV_NO_PAYLOAD);
       // bottom panel: its height is the state, so it sits *below* the splitter.
       VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_fixed(a->bottom_h)),
@@ -100,10 +98,9 @@ static void view(vv_Ctx *c, void *st) {
       }
     }
 
-    // The right splitter resizes the inspector from its left edge: growing the
-    // divide should shrink the inspector, so we track against -drag by feeding
-    // the *current* right width and letting update clamp the emitted value.
-    if (vv_double_clicked(c, vv_splitter(c, "sr", VV_ROW, -a->right_w, -520, -160, MSG_RIGHT)))
+    // The inspector is a trailing pane: the `trailing` flag makes a rightward
+    // drag shrink it, so we pass a plain positive width.
+    if (vv_double_clicked(c, vv_splitter(c, "sr", VV_ROW, true, a->right_w, 160, 520, MSG_RIGHT)))
       vv_emit(c, MSG_RESET_R, VV_NO_PAYLOAD);
 
     // -- right inspector ----------------------------------------------------

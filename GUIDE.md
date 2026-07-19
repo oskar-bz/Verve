@@ -538,29 +538,50 @@ lines (keeping a goal column), Home/End act per line, selection spans rows, and
 content scrolls. Pass `height <= 0` to grow and fill the parent pane.
 
 **Menus, popovers, tooltips.** These are in-app overlays (portable, spring-
-animated) — not OS menu bars, which SDL3 doesn't expose cross-platform. Because
-the painter is strict tree order, **build overlays last in your view** (as the
-final children of the root) so they sit on top:
+animated) — not OS menu bars, which SDL3 doesn't expose cross-platform. They set
+a layout `.z`, so the painter (and hit testing) lift them above the normal tree.
+That means you **declare them inline**, right where they're logically relevant —
+no "build overlays last" bookkeeping:
 
 ```c
-// in the toolbar/menubar area:
 vv_menubar_begin(c);
 uint32_t file = vv_menu_title(c, "file", "File");
-vv_menubar_end(c);
-// ... rest of the UI ...
-// overlay layer, at the very end of view():
-if (vv_menu_is_open(c, file)) {
+if (vv_menu_is_open(c, file)) {                 // dropdown declared with its title
     vv_Rect r = vv_node(c, file)->actual_rect;
     vv_menu_begin(c, "filemenu", vv_v2(r.x, r.y + r.h));
     if (vv_menu_item(c, "open", "Open...", "Ctrl+O")) vv_emit(c, MSG_OPEN, VV_NO_PAYLOAD);
     vv_menu_end(c);
 }
+vv_menubar_end(c);
 ```
 
 Menus self-manage which one is open and dismiss on outside-click/Escape (a full-
-window scrim). `vv_popover_begin(c, key, at, width, close_msg)` is the same idea
-for app-owned open state (the scrim emits `close_msg`). `vv_tooltip(c, id, text)`
-shows a hover-delayed label below a node.
+window scrim). Any node with `.z > 0` becomes an overlay, so this is a general
+z-index — not menu-only. `vv_tooltip(c, id, text)` shows a hover-delayed label.
+
+For popovers there are two flavors: `vv_popover_begin(c, key, at, width,
+close_msg)` for app-owned state (the scrim emits `close_msg`), and
+`vv_popover_open(c, key, at, width, &open)` which flips a `bool` directly — pair
+it with `vv_ui_state` (below) for a popover with *no* app plumbing at all:
+
+```c
+bool *open = vv_ui_state(c, "insert-popover", bool);   // view-local, no App field
+if (vv_clicked(c, aa_button)) *open = !*open;
+if (*open) {
+    vv_popover_open(c, "pop", at, 240, open);          // scrim/Escape clear *open
+    vv_button(c, "date", "Date stamp", MSG_SNIPPET, vv_ps("[2026-07-19] "));
+    vv_popover_end(c);
+}
+```
+
+**Transient UI state (`vv_ui_state`).** The pure-`view` rule means state lives
+outside `view` — but a lot of state is *view-local*: "is this popover open", a
+hovered index, a draft string. Routing each through an App field + message +
+`update` case is ceremony. `vv_ui_state(ctx, "key", T)` gives a `T*` that is
+zeroed on first use and persists across frames (session-lived, keyed by string,
+independent of any node's lifetime). Use it for local flags; keep the message/
+`update` path for state with real consequences (saves, navigation, undo). The
+self-managing menu open-state is the same idea, hidden inside the widget.
 
 **Native file dialogs.** The real OS picker, via SDL3, is asynchronous — the
 callback fires later during the pump:
@@ -580,6 +601,21 @@ while (vv_app_pump_all() > 0) {         // routes events to each window by ID
     // for each window: vv_run_frame(&its_ctx, dt, vv_app_input(its_app), ...)
     //                  then frame_begin/vv_render/frame_end on that window
 }
+```
+
+**Resizable panels (`vv_splitter`).** Multi-panel layouts are just nested
+`VV_ROW`/`VV_COLUMN` with `vv_fixed`/`vv_grow`. To make a divide draggable, keep
+the pane's size in app state and drop a `vv_splitter` between the panes; it emits
+a resize message you clamp and store, and the panes FLIP-spring to the new size.
+Set `trailing = true` for a right/bottom-docked pane so a drag toward it shrinks
+it (no sign juggling). See `examples/panels.c`.
+
+```c
+left .w = vv_fixed(a->left_w);
+vv_splitter(c, "sl", VV_ROW, /*trailing*/ false, a->left_w, 140, 460, MSG_LEFT);
+center .w = vv_grow(1);
+vv_splitter(c, "sr", VV_ROW, /*trailing*/ true,  a->right_w, 160, 520, MSG_RIGHT);
+right .w = vv_fixed(a->right_w);
 ```
 
 ---

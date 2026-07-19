@@ -284,6 +284,17 @@ static void emit_scrollbar(vv_Ctx *ctx, vv_Node *n, float inh) {
 static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op,
                              float scroll_ox, float scroll_oy) {
     vv_Node *n = vv_pool_get(&ctx->pool, index);
+
+    // Overlay lift (§ overlays): a node with z>0 is painted in a later pass,
+    // above the normal tree, in ascending z. Collect and skip it here; the
+    // deferred pass re-enters with emitting_overlay set so it (and its subtree)
+    // animate and emit unclipped, on top. Mirrors the hit-test ordering.
+    if (n->decl.z > 0 && !ctx->emitting_overlay) {
+        int cap = (int)(sizeof ctx->overlays / sizeof ctx->overlays[0]);
+        if (ctx->overlay_count < cap) ctx->overlays[ctx->overlay_count++] = index;
+        return;
+    }
+
     vv_SpringParams p = node_params(n);
 
     // Birth: snap actual to target, no animation on first appearance of style
@@ -365,6 +376,23 @@ static void present_exiting(vv_Ctx *ctx, float dt) {
 
 void vv_present(vv_Ctx *ctx) {
     float dt = scaled_dt(ctx);
+    ctx->overlay_count = 0;
     animate_and_emit(ctx, ctx->root, dt, 1.0f, 0.0f, 0.0f);
     present_exiting(ctx, dt);
+
+    // Overlay pass: emit collected z>0 subtrees above the tree, ascending z
+    // (stable insertion sort preserves build order among equal z). The scissor
+    // stack is empty here, so overlays are not clipped by ancestors.
+    for (int i = 1; i < ctx->overlay_count; i++) {
+        uint32_t v = ctx->overlays[i];
+        int z = vv_pool_get(&ctx->pool, v)->decl.z, j = i - 1;
+        while (j >= 0 && vv_pool_get(&ctx->pool, ctx->overlays[j])->decl.z > z) {
+            ctx->overlays[j + 1] = ctx->overlays[j]; j--;
+        }
+        ctx->overlays[j + 1] = v;
+    }
+    ctx->emitting_overlay = true;
+    for (int i = 0; i < ctx->overlay_count; i++)
+        animate_and_emit(ctx, ctx->overlays[i], dt, 1.0f, 0.0f, 0.0f);
+    ctx->emitting_overlay = false;
 }

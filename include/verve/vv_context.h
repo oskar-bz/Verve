@@ -108,6 +108,18 @@ typedef struct vv_Ctx {
     int      depth;
     bool     in_build;
 
+    // Transient UI-local state, keyed by string, not tied to a node's lifetime
+    // (§12.2). For view-local flags — "is this popover open", a hover index —
+    // that would otherwise need an app-state field + message + update case.
+    struct { vv_ID id; void *data; } ui_locals[128];
+    int      ui_local_count;
+
+    // Overlay layer: nodes with decl.z > 0 collected during present and painted
+    // last, in ascending z, above the normal tree (§ overlays).
+    uint32_t overlays[64];
+    int      overlay_count;
+    bool     emitting_overlay; // guard so an overlay root isn't re-skipped
+
     vv_CommandBuffer cmds;
 
     vv_FrameTier last_tier;
@@ -222,6 +234,14 @@ void    vv_request_focus_next(vv_Ctx *ctx);
 // The one genuinely privileged widget call.
 void   *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size);
 #define vv_state(ctx, index, T) ((T *)vv_state_raw((ctx), (index), sizeof(T)))
+
+// Transient UI-local state, keyed by a string rather than a node (§12.2). Zeroed
+// on first use, persists across frames for the session — the escape hatch for
+// small view-local flags (popover open, hovered index, a draft value) so they
+// don't need a field in app state plus a message and an update() case. Keep the
+// key unique and stable; the set of keys is expected to be bounded (cap 128).
+void   *vv_ui_state_raw(vv_Ctx *ctx, const char *key, size_t size);
+#define vv_ui_state(ctx, key, T) ((T *)vv_ui_state_raw((ctx), (key), sizeof(T)))
 
 // Current pointer position (screen space), for widgets doing their own math.
 static inline vv_Vec2 vv_mouse(vv_Ctx *ctx) { return ctx->input.mouse; }

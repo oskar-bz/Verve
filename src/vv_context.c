@@ -53,6 +53,23 @@ void vv_set_measure_fn(vv_Ctx *ctx,
 void *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size) {
     return vv_pool_state(&ctx->pool, index, (uint32_t)size);
 }
+
+// UI-local state: string-keyed, node-independent, session-lived. A flat table
+// (linear scan) — the key set is small and bounded, so this stays cheap and
+// avoids the node lifetime coupling of vv_state.
+void *vv_ui_state_raw(vv_Ctx *ctx, const char *key, size_t size) {
+    vv_ID id = vv_id_str(VV_ID_ROOT, 0, key);
+    for (int i = 0; i < ctx->ui_local_count; i++)
+        if (ctx->ui_locals[i].id == id) return ctx->ui_locals[i].data;
+    void *data = vv_arena_calloc(&ctx->persistent, size);
+    int cap = (int)(sizeof ctx->ui_locals / sizeof ctx->ui_locals[0]);
+    if (ctx->ui_local_count < cap) {
+        ctx->ui_locals[ctx->ui_local_count].id = id;
+        ctx->ui_locals[ctx->ui_local_count].data = data;
+        ctx->ui_local_count++;
+    }
+    return data; // over-cap keys still get valid (if unshared) storage
+}
 // Screenshot mode (VV_SHOT) forces continuous rendering so a capture harness
 // can grab a settled frame instead of the loop going idle mid-animation.
 void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on && !getenv("VV_SHOT"); }

@@ -9,9 +9,21 @@
 // Topmost node under `p`: the last node in pre-order (= painted last = on top)
 // whose actual_rect contains p and which participates in hit testing. Disabled
 // subtrees and exiting corpses are skipped (§3.3, §5.2).
+//
+// Overlays (decl.z > 0) paint in a later pass above the tree, so hit testing
+// must agree or a click would fall through to content painted underneath. When
+// `collect` is set the main walk skips z>0 subtrees, recording their roots; the
+// caller then re-tests them in ascending z (paint order) so the topmost overlay
+// claims the hit. `nov` caps at the overlay array size.
 static void hit_test(vv_NodePool *pool, uint32_t idx, vv_Vec2 p,
-                     bool disabled, vv_ID *out) {
+                     bool disabled, vv_ID *out,
+                     bool collect, uint32_t *ov, int *nov, int ov_cap) {
     vv_Node *n = vv_pool_get(pool, idx);
+
+    if (collect && n->decl.z > 0) {           // an overlay root: defer it
+        if (*nov < ov_cap) ov[(*nov)++] = idx;
+        return;
+    }
     bool dis = disabled || n->decl.disabled;
 
     // Text is decorative and pass-through, so a label inside a button doesn't
@@ -26,7 +38,7 @@ static void hit_test(vv_NodePool *pool, uint32_t idx, vv_Vec2 p,
     if (clipped) return;
 
     for (uint32_t c = n->first_child; c != VV_NIL; c = vv_pool_get(pool, c)->next_sibling)
-        hit_test(pool, c, p, dis, out);
+        hit_test(pool, c, p, dis, out, collect, ov, nov, ov_cap);
 }
 
 static vv_Node *by_id(vv_Ctx *ctx, vv_ID id) {
@@ -50,7 +62,20 @@ static vv_ID interactive_target(vv_Ctx *ctx, vv_ID topmost) {
 
 static vv_ID hit_target(vv_Ctx *ctx, vv_Vec2 p) {
     vv_ID hit = 0;
-    hit_test(&ctx->pool, ctx->root, p, false, &hit);
+    uint32_t ov[64]; int nov = 0;
+    // Pass 1: the normal tree, collecting overlay roots (z>0) instead of
+    // descending them.
+    hit_test(&ctx->pool, ctx->root, p, false, &hit, true, ov, &nov, 64);
+    // Pass 2: overlays in ascending z (stable insertion sort keeps build order
+    // among equal z), each overwriting the hit — mirroring the paint order.
+    for (int i = 1; i < nov; i++) {
+        uint32_t v = ov[i];
+        int z = vv_pool_get(&ctx->pool, v)->decl.z, j = i - 1;
+        while (j >= 0 && vv_pool_get(&ctx->pool, ov[j])->decl.z > z) { ov[j + 1] = ov[j]; j--; }
+        ov[j + 1] = v;
+    }
+    for (int i = 0; i < nov; i++)
+        hit_test(&ctx->pool, ov[i], p, false, &hit, false, NULL, NULL, 0);
     return interactive_target(ctx, hit);
 }
 
