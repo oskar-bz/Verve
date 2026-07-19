@@ -52,13 +52,29 @@ demo: $(DEMO_BIN)
 
 # Windowed examples share the SDL3/GL backend build (explicit, not pattern, to
 # avoid clashing with the headless examples rule).
-gui: $(BUILD)/gui_demo $(BUILD)/sevenguis
+gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/sevenguis: examples/sevenguis.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/mycounter: examples/mycounter.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+
+# Hot-reload demo: the view is a .so the host dlopen's and swaps on change.
+# Run ./build/hotdemo, then edit examples/hot/view.c and `make hot` to rebuild
+# just the .so — the running host picks it up and keeps its state.
+.PHONY: hot
+hot: $(BUILD)/hotview.so
+$(BUILD)/hotview.so: examples/hot/view.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) -Iexamples/hot -fPIC -shared $< $(LIB) $(LDLIBS) -o $@
+$(BUILD)/hotdemo: examples/hot/host.c backends/vv_sdl_gl.c $(LIB) $(BUILD)/hotview.so
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) -Iexamples/hot examples/hot/host.c backends/vv_sdl_gl.c $(LIB) \
+		$(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -ldl -o $@
 
 test: $(TEST_BIN)
 	@echo "== running tests =="
