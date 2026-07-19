@@ -80,6 +80,7 @@ uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
   // Variants are consumed at build time (§7.1), so these locals are fine.
   vv_Style hover = {.bg = t->accent_hi};
   vv_Style active = {.bg = t->accent_lo, .transform = vv_scale(0.97f)};
+  vv_Style focus = {.border_color = t->on_accent, .border_width = vv_all(2)}; // keyboard ring
   uint32_t id =
       vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                    VV_LAYOUT(.w = vv_fit(), .h = vv_fixed(38),
@@ -87,13 +88,13 @@ uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
                              .cross = VV_ALIGN_CENTER, .focusable = true,
                              .cursor = VV_CURSOR_POINTER),
                    VV_STYLE(.bg = t->accent, .radius = vv_r(t->radius),
-                            .hover = &hover, .active = &active));
+                            .hover = &hover, .active = &active, .focus = &focus));
 
   vv_text(ctx, label,
           (vv_Style){
               .fg = t->on_accent, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
-  if (vv_clicked(ctx, id)) vv_emit(ctx, click, arg);
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) vv_emit(ctx, click, arg);
   vv_on(ctx, id, on);
   return id;
 }
@@ -120,7 +121,7 @@ uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change) {
                VV_STYLE(.bg = t->knob, .radius = vv_r(10)));
   vv_end_box(ctx);
   vv_end_box(ctx);
-  if (vv_clicked(ctx, id)) vv_emit(ctx, change, vv_pi(!value));
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) vv_emit(ctx, change, vv_pi(!value));
   return id;
 }
 
@@ -129,12 +130,14 @@ uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change) {
 uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,
                      bool value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
+  vv_Style cbfocus = {.border_color = t->accent, .border_width = vv_all(2), .radius = vv_r(6)};
   uint32_t row = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                               (vv_LayoutDecl){.dir = VV_ROW,
                                               .gap = 10,
                                               .cross = VV_ALIGN_CENTER,
+                                              .padding = vv_hv(2, 2),
                                               .focusable = true},
-                              (vv_Style){0});
+                              (vv_Style){.focus = &cbfocus});
   {
     vv_box_keyed(ctx, "box", 3,
                  (vv_LayoutDecl){.w = vv_fixed(20), .h = vv_fixed(20)},
@@ -667,6 +670,7 @@ uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                       bool selected, vv_Msg click, vv_Payload arg) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
+  vv_Style focus = {.border_color = t->accent, .border_width = vv_all(2)};
   uint32_t id =
       vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                    (vv_LayoutDecl){.dir = VV_ROW,
@@ -677,13 +681,14 @@ uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                                    .focusable = true},
                    (vv_Style){.bg = selected ? t->accent_lo : t->surface,
                               .radius = vv_r(6),
-                              .hover = selected ? NULL : &hover});
+                              .hover = selected ? NULL : &hover,
+                              .focus = &focus});
   vv_text(ctx, label,
           (vv_Style){.fg = selected ? t->on_accent : t->text,
                      .font_size = t->font_size,
                      .font = t->font});
   vv_end_box(ctx);
-  if (vv_clicked(ctx, id)) vv_emit(ctx, click, arg);
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) vv_emit(ctx, click, arg);
   return id;
 }
 
@@ -961,7 +966,7 @@ uint32_t vv_menu_title(vv_Ctx *ctx, const char *key, const char *label) {
                              (vv_Style){.radius = vv_r(6)});
   vv_ID nid = vv_node(ctx, id)->id;
   bool open = (g_open_menu == nid);
-  if (vv_clicked(ctx, id)) g_open_menu = open ? 0 : nid;
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) g_open_menu = open ? 0 : nid;
   else if (g_open_menu != 0 && g_open_menu != nid && vv_hovered(ctx, id)) g_open_menu = nid;
   // Re-read after the possible toggle so the highlight is immediate.
   open = (g_open_menu == nid);
@@ -1018,7 +1023,7 @@ bool vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
     vv_text(ctx, shortcut, (vv_Style){.fg = hot ? t->on_accent : t->text_muted,
                                       .font_size = t->font_size - 2, .font = t->font});
   vv_end_box(ctx);
-  bool clicked = vv_clicked(ctx, id);
+  bool clicked = vv_clicked(ctx, id) || vv_activated(ctx, id);
   if (clicked) { g_open_menu = 0; if (g_ctxmenu_open) *g_ctxmenu_open = false; }
   return clicked;
 }
@@ -1178,7 +1183,7 @@ uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date, vv_Msg change
   vv_text(ctx, "v", (vv_Style){.fg = t->text_muted, .font_size = t->font_size - 2});
   vv_end_box(ctx);
   // Open toggles; opening resyncs the view to the selected month.
-  if (vv_clicked(ctx, id)) { s->open = !s->open; s->vy = y; s->vm = m; }
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) { s->open = !s->open; s->vy = y; s->vm = m; }
 
   if (s->open) {
     const float cellw = 32, pad = 10, W = 7 * cellw + pad * 2;
@@ -1246,11 +1251,12 @@ uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
                   bool selected, vv_Msg change, vv_Payload arg) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
+  vv_Style focus = {.border_color = t->accent, .border_width = vv_all(2)};
   uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
       (vv_LayoutDecl){.dir = VV_ROW, .h = vv_fixed(30), .cross = VV_ALIGN_CENTER,
                       .gap = 8, .padding = vv_hv(6, 0), .focusable = true,
                       .cursor = VV_CURSOR_POINTER},
-      (vv_Style){.radius = vv_r(6), .hover = &hover});
+      (vv_Style){.radius = vv_r(6), .hover = &hover, .focus = &focus});
   // Outer ring.
   vv_box_keyed(ctx, "o", 1, (vv_LayoutDecl){.w = vv_fixed(18), .h = vv_fixed(18),
                             .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER},
@@ -1264,7 +1270,7 @@ uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
   vv_end_box(ctx);
   vv_text(ctx, label, (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
   vv_end_box(ctx);
-  if (vv_clicked(ctx, id)) vv_emit(ctx, change, arg);
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) vv_emit(ctx, change, arg);
   return id;
 }
 
@@ -1347,7 +1353,7 @@ uint32_t vv_tabs(vv_Ctx *ctx, const char *key, const char *const *labels,
     vv_text(ctx, labels[i], (vv_Style){.fg = act ? t->on_accent : t->text_muted,
                                        .font_size = t->font_size});
     vv_end_box(ctx);
-    if (vv_clicked(ctx, tid)) vv_emit(ctx, change, vv_pi(i));
+    if (vv_clicked(ctx, tid) || vv_activated(ctx, tid)) vv_emit(ctx, change, vv_pi(i));
   }
   vv_end_box(ctx);
   return bar;
@@ -1371,7 +1377,7 @@ uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
   vv_text(ctx, cur, (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
   vv_text(ctx, "v", (vv_Style){.fg = t->text_muted, .font_size = t->font_size - 2});
   vv_end_box(ctx);
-  if (vv_clicked(ctx, id)) s->open = !s->open;
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) s->open = !s->open;
 
   if (s->open) {
     vv_Rect r = vv_node(ctx, id)->actual_rect;

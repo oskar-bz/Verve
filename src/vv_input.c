@@ -278,6 +278,12 @@ bool vv_active(vv_Ctx *ctx, uint32_t index)  { return id_of(ctx, index) == ctx->
 bool vv_focused(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->focused_id && ctx->focused_id; }
 bool vv_double_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->double_clicked_id && ctx->double_clicked_id; }
 bool vv_right_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->right_clicked_id && ctx->right_clicked_id; }
+bool vv_activated(vv_Ctx *ctx, uint32_t index) {
+    if (!ctx->focused_id || id_of(ctx, index) != ctx->focused_id) return false;
+    for (int i = 0; i < ctx->input.key_count; i++)
+        if (ctx->input.keys[i].key == VV_KEY_ENTER) return true;
+    return false;
+}
 
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index) {
     return vv_active(ctx, index) ? ctx->drag_delta : vv_v2(0, 0);

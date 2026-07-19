@@ -251,6 +251,9 @@ bool    vv_active(vv_Ctx *ctx, uint32_t index);   // held with capture
 bool    vv_focused(vv_Ctx *ctx, uint32_t index);
 bool    vv_double_clicked(vv_Ctx *ctx, uint32_t index);
 bool    vv_right_clicked(vv_Ctx *ctx, uint32_t index); // right-button click (context menus)
+// True when the node is focused and Enter was pressed this frame — so keyboard
+// users can activate a Tab-focused button/checkbox/menu item (§11.3).
+bool    vv_activated(vv_Ctx *ctx, uint32_t index);
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 // Focus the next focusable node built this frame (autofocus a field on open).
