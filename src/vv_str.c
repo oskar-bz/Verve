@@ -143,3 +143,68 @@ ptrdiff_t vv_str_find(const char *s, const char *needle) {
     const char *hit = strstr(s, needle);
     return hit ? (ptrdiff_t)(hit - s) : -1;
 }
+
+// ---- UTF-8 -----------------------------------------------------------------
+
+uint32_t vv_utf8_decode(const char *s, int *adv) {
+    const unsigned char *u = (const unsigned char *)s;
+    unsigned char c = u[0];
+    if (c < 0x80) { if (adv) *adv = 1; return c; }
+    if ((c & 0xE0) == 0xC0 && (u[1] & 0xC0) == 0x80) {
+        if (adv) *adv = 2;
+        return (uint32_t)((c & 0x1F) << 6) | (u[1] & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0 && (u[1] & 0xC0) == 0x80 && (u[2] & 0xC0) == 0x80) {
+        if (adv) *adv = 3;
+        return (uint32_t)((c & 0x0F) << 12) | (uint32_t)((u[1] & 0x3F) << 6) | (u[2] & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0 && (u[1] & 0xC0) == 0x80 && (u[2] & 0xC0) == 0x80 && (u[3] & 0xC0) == 0x80) {
+        if (adv) *adv = 4;
+        return (uint32_t)((c & 0x07) << 18) | (uint32_t)((u[1] & 0x3F) << 12) |
+               (uint32_t)((u[2] & 0x3F) << 6) | (u[3] & 0x3F);
+    }
+    if (adv) *adv = 1; // malformed: consume one byte
+    return 0xFFFD;
+}
+
+int vv_utf8_next(const char *s, int len, int i) {
+    if (i >= len) return len;
+    int adv = 1;
+    vv_utf8_decode(s + i, &adv);
+    i += adv;
+    return i > len ? len : i;
+}
+
+int vv_utf8_prev(const char *s, int i) {
+    if (i <= 0) return 0;
+    i--;
+    // Back up over UTF-8 continuation bytes (10xxxxxx).
+    while (i > 0 && ((unsigned char)s[i] & 0xC0) == 0x80) i--;
+    return i;
+}
+
+int vv_utf8_count(const char *s, int len) {
+    int n = 0;
+    for (int i = 0; i < len;) { i = vv_utf8_next(s, len, i); n++; }
+    return n;
+}
+
+int vv_utf8_encode(uint32_t cp, char *out) {
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
+}

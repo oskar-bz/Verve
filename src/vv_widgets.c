@@ -389,17 +389,21 @@ static float measure_prefix(vv_Ctx *ctx, const char *buf, int n, float size) {
   return (float)n * size * 0.5f;
 }
 
-// Byte index whose caret is nearest pointer x (relative to text start).
+// Byte index whose caret is nearest pointer x (relative to text start). Steps by
+// whole codepoint so the caret lands on a character boundary, never mid-byte.
 static int char_from_x(vv_Ctx *ctx, const char *buf, int len, float size,
                        float x) {
   if (x <= 0)
     return 0;
   float prev = 0;
-  for (int i = 1; i <= len; i++) {
-    float w = measure_prefix(ctx, buf, i, size);
+  int i = 0;
+  while (i < len) {
+    int nxt = vv_utf8_next(buf, len, i);
+    float w = measure_prefix(ctx, buf, nxt, size);
     if (x < (prev + w) * 0.5f)
-      return i - 1;
+      return i;
     prev = w;
+    i = nxt;
   }
   return len;
 }
@@ -475,11 +479,11 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   switch (ev.key) {
   case VV_KEY_LEFT:
     if (s->cursor > 0)
-      s->cursor--;
+      s->cursor = vv_utf8_prev(buf, s->cursor);
     break;
   case VV_KEY_RIGHT:
     if (s->cursor < *len)
-      s->cursor++;
+      s->cursor = vv_utf8_next(buf, *len, s->cursor);
     break;
   case VV_KEY_HOME:
     s->cursor = 0;
@@ -500,8 +504,9 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
       s->cursor = s->anchor = start;
       changed = true;
     } else if (s->cursor > 0) {
-      erase_range(buf, len, s->cursor - 1, s->cursor);
-      s->cursor--;
+      int p = vv_utf8_prev(buf, s->cursor); // delete one whole codepoint
+      erase_range(buf, len, p, s->cursor);
+      s->cursor = p;
       s->anchor = s->cursor;
       changed = true;
     }
@@ -510,7 +515,7 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
     if (delete_selection(buf, len, s)) {
       changed = true;
     } else if (s->cursor < *len) {
-      erase_range(buf, len, s->cursor, s->cursor + 1);
+      erase_range(buf, len, s->cursor, vv_utf8_next(buf, *len, s->cursor));
       changed = true;
     }
     break;
@@ -719,8 +724,8 @@ static bool ml_handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   bool vertical = (ev.key == VV_KEY_UP || ev.key == VV_KEY_DOWN);
   if (!vertical) s->have_goal = false;
   switch (ev.key) {
-  case VV_KEY_LEFT:  if (ts->cursor > 0) ts->cursor--; break;
-  case VV_KEY_RIGHT: if (ts->cursor < *len) ts->cursor++; break;
+  case VV_KEY_LEFT:  if (ts->cursor > 0) ts->cursor = vv_utf8_prev(buf, ts->cursor); break;
+  case VV_KEY_RIGHT: if (ts->cursor < *len) ts->cursor = vv_utf8_next(buf, *len, ts->cursor); break;
   case VV_KEY_HOME:  ts->cursor = ml_line_start(buf, ts->cursor); break;
   case VV_KEY_END:   ts->cursor = ml_line_end(buf, *len, ts->cursor); break;
   case VV_KEY_UP:
@@ -741,11 +746,11 @@ static bool ml_handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   }
   case VV_KEY_BACKSPACE:
     if (delete_selection(buf, len, ts)) changed = true;
-    else if (ts->cursor > 0) { erase_range(buf, len, ts->cursor - 1, ts->cursor); ts->cursor--; ts->anchor = ts->cursor; changed = true; }
+    else if (ts->cursor > 0) { int p = vv_utf8_prev(buf, ts->cursor); erase_range(buf, len, p, ts->cursor); ts->cursor = p; ts->anchor = p; changed = true; }
     break;
   case VV_KEY_DELETE:
     if (delete_selection(buf, len, ts)) changed = true;
-    else if (ts->cursor < *len) { erase_range(buf, len, ts->cursor, ts->cursor + 1); changed = true; }
+    else if (ts->cursor < *len) { erase_range(buf, len, ts->cursor, vv_utf8_next(buf, *len, ts->cursor)); changed = true; }
     break;
   case VV_KEY_A:
     if (ev.ctrl) { ts->anchor = 0; ts->cursor = *len; }

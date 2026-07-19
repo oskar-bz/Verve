@@ -14,20 +14,42 @@
 // One backend, two shader programs: a rounded-box SDF for rects (fill + border +
 // shadow + AA in one pass, §9.1) and a textured-quad shader for glyphs.
 
-#define ATLAS_W 1024
-#define ATLAS_H 1024
-#define BAKE_PX 48.0f          // atlas rasterization size; scaled per draw
-#define FIRST_CHAR 32
-#define NUM_CHARS 95           // printable ASCII 32..126
+#define ATLAS_W 2048
+#define ATLAS_H 2048
+#define BAKE_PX 44.0f          // atlas rasterization size; scaled per draw
 #define MAX_FONTS 8
 #define MAX_SCISSORS 64
+#define GLYPH_CAP 4096         // open-addressing cache slots (power of two)
 
+// A loaded face. We keep the TTF bytes so glyphs can be rasterized on demand
+// (any Unicode codepoint), not just a pre-baked ASCII range.
 typedef struct {
-    bool          loaded;
-    stbtt_bakedchar chars[NUM_CHARS];
-    GLuint        tex;
-    float         ascent;      // scaled to BAKE_PX
+    bool           loaded;
+    unsigned char *ttf;
+    stbtt_fontinfo info;
+    float          scale;              // stbtt scale for BAKE_PX
+    float          ascent, descent, line_gap; // scaled to BAKE_PX
 } Font;
+
+// One cached glyph in the shared atlas (metrics in bake space, scaled per draw).
+typedef struct {
+    uint64_t key;              // (font<<32)|codepoint; 0 = empty slot
+    float    u0, v0, u1, v1;   // atlas UVs
+    float    xoff, yoff;       // bitmap offset from the pen
+    float    xadv, w, h;       // advance + bitmap size
+    bool     used;
+} Glyph;
+
+// Shared across a window and its GL-sharing children: one atlas texture, one
+// shelf packer, one glyph cache, one font table.
+typedef struct {
+    Font   fonts[MAX_FONTS];
+    int    font_count;
+    GLuint atlas;
+    int    shelf_x, shelf_y, shelf_h; // skyline/shelf packer cursor
+    bool   full;                      // atlas exhausted (new glyphs render blank)
+    Glyph  glyphs[GLYPH_CAP];
+} FontSystem;
 
 struct vv_App {
     SDL_Window   *win;
@@ -39,8 +61,8 @@ struct vv_App {
     GLuint vao, vbo;
     GLint  rect_u_vp, text_u_vp, text_u_tex;
 
-    Font   fonts[MAX_FONTS];
-    int    font_count;
+    FontSystem *fs;         // shared with GL-sharing children
+    bool   owns_fs;         // root window frees it
     bool   shares_gl;       // child window: programs/atlas belong to the parent
 
     vv_Rect scissors[MAX_SCISSORS];
@@ -178,15 +200,32 @@ static void vpush(vv_App *a, size_t n) {
     }
 }
 
-// ---- font -----------------------------------------------------------------
+// ---- font + dynamic glyph atlas -------------------------------------------
 
-static const Font *font_of(vv_App *a, vv_FontID id) {
-    if (id < (vv_FontID)a->font_count && a->fonts[id].loaded) return &a->fonts[id];
-    return a->font_count > 0 && a->fonts[0].loaded ? &a->fonts[0] : NULL;
+static const Font *font_of(FontSystem *fs, vv_FontID id) {
+    if (id < (vv_FontID)fs->font_count && fs->fonts[id].loaded) return &fs->fonts[id];
+    return fs->font_count > 0 && fs->fonts[0].loaded ? &fs->fonts[0] : NULL;
+}
+
+static void ensure_atlas(FontSystem *fs) {
+    if (fs->atlas) return;
+    glGenTextures(1, &fs->atlas);
+    glBindTexture(GL_TEXTURE_2D, fs->atlas);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, ATLAS_W, ATLAS_H, 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
+    // Clear to 0 so unused atlas regions are transparent.
+    unsigned char *zero = calloc((size_t)ATLAS_W, ATLAS_H);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, ATLAS_W, ATLAS_H, GL_RED, GL_UNSIGNED_BYTE, zero);
+    free(zero);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 }
 
 vv_FontID vv_app_load_font(vv_App *a, const char *path) {
-    if (a->font_count >= MAX_FONTS) return 0;
+    FontSystem *fs = a->fs;
+    if (fs->font_count >= MAX_FONTS) return 0;
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "font: cannot open %s\n", path); return 0; }
     fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
@@ -194,93 +233,152 @@ vv_FontID vv_app_load_font(vv_App *a, const char *path) {
     if (fread(ttf, 1, (size_t)sz, f) != (size_t)sz) { fclose(f); free(ttf); return 0; }
     fclose(f);
 
-    unsigned char *bitmap = calloc(ATLAS_W, ATLAS_H);
-    Font *fo = &a->fonts[a->font_count];
-    stbtt_BakeFontBitmap(ttf, 0, BAKE_PX, bitmap, ATLAS_W, ATLAS_H,
-                         FIRST_CHAR, NUM_CHARS, fo->chars);
-
-    // Ascent for baseline placement, scaled to BAKE_PX.
-    stbtt_fontinfo info; stbtt_InitFont(&info, ttf, 0);
-    int asc, desc, gap; stbtt_GetFontVMetrics(&info, &asc, &desc, &gap);
-    fo->ascent = (float)asc * stbtt_ScaleForPixelHeight(&info, BAKE_PX);
-
-    glGenTextures(1, &fo->tex);
-    glBindTexture(GL_TEXTURE_2D, fo->tex);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, ATLAS_W, ATLAS_H, 0, GL_RED, GL_UNSIGNED_BYTE, bitmap);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-    free(bitmap); free(ttf);
+    Font *fo = &fs->fonts[fs->font_count];
+    if (!stbtt_InitFont(&fo->info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0))) {
+        free(ttf); return 0;
+    }
+    fo->ttf = ttf; // kept for on-demand rasterization
+    fo->scale = stbtt_ScaleForPixelHeight(&fo->info, BAKE_PX);
+    int asc, desc, gap; stbtt_GetFontVMetrics(&fo->info, &asc, &desc, &gap);
+    fo->ascent   = (float)asc * fo->scale;
+    fo->descent  = (float)desc * fo->scale;
+    fo->line_gap = (float)gap * fo->scale;
     fo->loaded = true;
-    return (vv_FontID)a->font_count++;
+    ensure_atlas(fs);
+    return (vv_FontID)fs->font_count++;
 }
 
-// Shared glyph walk: measures (emit==NULL) or emits quads. Single line; the
-// layout engine handles multi-line via wrap width in a later phase — for now we
-// wrap greedily on spaces to keep measure and draw in agreement.
-static vv_Vec2 text_layout(vv_App *a, const Font *fo, const char *s, int len,
+// True for scripts written without spaces, so we allow a line break after each
+// such codepoint (CJK, kana, Hangul, fullwidth) — a reduced UAX #14.
+static bool is_cjk(uint32_t cp) {
+    return (cp >= 0x3000 && cp <= 0x9FFF) || (cp >= 0xAC00 && cp <= 0xD7A3) ||
+           (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFF00 && cp <= 0xFFEF);
+}
+
+// Fetch a glyph, rasterizing + packing it into the shared atlas on first use.
+// Falls back across loaded fonts for coverage. Requires a current GL context
+// (true during layout/measure — the app keeps one current). Returns NULL if the
+// atlas cache table is somehow full.
+static const Glyph *get_glyph(vv_App *a, vv_FontID font, uint32_t cp) {
+    FontSystem *fs = a->fs;
+    uint64_t key = ((uint64_t)(font + 1) << 32) | cp;
+    uint32_t h = (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 40) & (GLYPH_CAP - 1);
+    Glyph *g = NULL;
+    for (uint32_t i = 0; i < GLYPH_CAP; i++) {
+        Glyph *slot = &fs->glyphs[(h + i) & (GLYPH_CAP - 1)];
+        if (slot->used && slot->key == key) return slot;
+        if (!slot->used) { g = slot; break; }
+    }
+    if (!g) return NULL;
+
+    // Resolve a font that actually has this codepoint (fallback chain).
+    const Font *fo = font_of(fs, font);
+    if (!fo) return NULL;
+    if (stbtt_FindGlyphIndex(&fo->info, (int)cp) == 0) {
+        for (int i = 0; i < fs->font_count; i++)
+            if (fs->fonts[i].loaded && stbtt_FindGlyphIndex(&fs->fonts[i].info, (int)cp)) {
+                fo = &fs->fonts[i]; break;
+            }
+    }
+    int adv, lsb; stbtt_GetCodepointHMetrics(&fo->info, (int)cp, &adv, &lsb);
+    *g = (Glyph){ .key = key, .used = true, .xadv = (float)adv * fo->scale };
+
+    int w = 0, hh = 0, xo = 0, yo = 0;
+    unsigned char *bmp = stbtt_GetCodepointBitmap(&fo->info, 0, fo->scale, (int)cp, &w, &hh, &xo, &yo);
+    if (bmp && w > 0 && hh > 0 && !fs->full) {
+        if (fs->shelf_x + w + 1 > ATLAS_W) { fs->shelf_y += fs->shelf_h + 1; fs->shelf_x = 0; fs->shelf_h = 0; }
+        if (fs->shelf_y + hh + 1 > ATLAS_H) fs->full = true;
+        if (!fs->full) {
+            int px = fs->shelf_x, py = fs->shelf_y;
+            glBindTexture(GL_TEXTURE_2D, fs->atlas);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, px, py, w, hh, GL_RED, GL_UNSIGNED_BYTE, bmp);
+            g->u0 = (float)px / ATLAS_W;       g->v0 = (float)py / ATLAS_H;
+            g->u1 = (float)(px + w) / ATLAS_W; g->v1 = (float)(py + hh) / ATLAS_H;
+            g->w = (float)w; g->h = (float)hh; g->xoff = (float)xo; g->yoff = (float)yo;
+            fs->shelf_x += w + 1;
+            if (hh > fs->shelf_h) fs->shelf_h = hh;
+        }
+    }
+    if (bmp) stbtt_FreeBitmap(bmp, NULL);
+    return g;
+}
+
+// Walk a UTF-8 string, measuring (emit==NULL) or emitting textured quads.
+// Wraps on spaces (words) and after CJK codepoints; '\n' forces a line.
+static vv_Vec2 text_layout(vv_App *a, vv_FontID font, const char *s, int len,
                            float size, float wrap, float ox, float oy,
                            vv_Color col, bool emit) {
+    const Font *fo = font_of(a->fs, font);
     if (!fo) return vv_v2(0, 0);
-    float scale = size / BAKE_PX;
+    float sc = size / BAKE_PX;
     float line_h = size * 1.25f;
-    float x = 0, y = 0, maxw = 0;
+    float baseline = fo->ascent; // bake pixels from line top
+    float x = 0, y = 0, maxw = 0; // x in bake pixels
     int i = 0;
     while (i < len) {
-        // Measure the next word to decide on a wrap break.
-        int ws = i; while (ws < len && s[ws] != ' ' && s[ws] != '\n') ws++;
-        float word_w = 0;
-        for (int k = i; k < ws; k++) {
-            int c = (unsigned char)s[k];
-            if (c < FIRST_CHAR || c >= FIRST_CHAR + NUM_CHARS) continue;
-            word_w += fo->chars[c - FIRST_CHAR].xadvance * scale;
-        }
-        if (wrap > 0 && x > 0 && x + word_w > wrap) { x = 0; y += line_h; }
+        int adv = 1;
+        uint32_t cp = vv_utf8_decode(s + i, &adv);
 
-        for (int k = i; k < ws; k++) {
-            int c = (unsigned char)s[k];
-            if (c < FIRST_CHAR || c >= FIRST_CHAR + NUM_CHARS) continue;
-            stbtt_aligned_quad q;
-            float bx = x / scale, by = fo->ascent; // bake-space cursor
-            stbtt_GetBakedQuad(fo->chars, ATLAS_W, ATLAS_H, c - FIRST_CHAR, &bx, &by, &q, 1);
-            x = bx * scale;
-            if (emit) {
-                // q coords are in bake space relative to baseline; scale + place.
-                float x0 = ox + q.x0 * scale, x1 = ox + q.x1 * scale;
-                float y0 = oy + y + (q.y0) * scale + (line_h - size) * 0.0f;
-                float y1 = oy + y + (q.y1) * scale;
-                float verts[6][8] = {
-                    {x0,y0, q.s0,q.t0, col.r,col.g,col.b,col.a},
-                    {x1,y0, q.s1,q.t0, col.r,col.g,col.b,col.a},
-                    {x1,y1, q.s1,q.t1, col.r,col.g,col.b,col.a},
-                    {x0,y0, q.s0,q.t0, col.r,col.g,col.b,col.a},
-                    {x1,y1, q.s1,q.t1, col.r,col.g,col.b,col.a},
-                    {x0,y1, q.s0,q.t1, col.r,col.g,col.b,col.a},
-                };
-                vpush(a, 6 * 8);
-                memcpy(a->verts + a->vcount, verts, sizeof verts);
-                a->vcount += 6 * 8;
+        if (cp == '\n') { maxw = fmaxf(maxw, x); x = 0; y += line_h; i += adv; continue; }
+
+        // Determine this chunk: a run up to the next break opportunity. A space
+        // is its own chunk; a CJK codepoint is its own chunk; otherwise a word.
+        int chunk_start = i, j = i;
+        float chunk_w = 0;
+        if (cp == ' ') {
+            const Glyph *g = get_glyph(a, font, ' ');
+            chunk_w = g ? g->xadv : 0; j += adv;
+        } else if (is_cjk(cp)) {
+            const Glyph *g = get_glyph(a, font, cp);
+            chunk_w = g ? g->xadv : 0; j += adv;
+        } else {
+            while (j < len) {
+                int a2 = 1; uint32_t c2 = vv_utf8_decode(s + j, &a2);
+                if (c2 == ' ' || c2 == '\n' || is_cjk(c2)) break;
+                const Glyph *g = get_glyph(a, font, c2);
+                chunk_w += g ? g->xadv : 0;
+                j += a2;
             }
         }
+        // Wrap before this chunk if it overflows (but never break a leading chunk).
+        bool breakable = cp != ' ';
+        if (wrap > 0 && x > 0 && breakable && (x + chunk_w) * sc > wrap) { maxw = fmaxf(maxw, x); x = 0; y += line_h; }
+
+        // Emit / advance the chunk's glyphs.
+        for (int k = chunk_start; k < j;) {
+            int a2 = 1; uint32_t c2 = vv_utf8_decode(s + k, &a2);
+            const Glyph *g = get_glyph(a, font, c2);
+            if (g) {
+                if (emit && g->w > 0) {
+                    float x0 = ox + (x + g->xoff) * sc, x1 = x0 + g->w * sc;
+                    float y0 = oy + y + (baseline + g->yoff) * sc, y1 = y0 + g->h * sc;
+                    float verts[6][8] = {
+                        {x0,y0, g->u0,g->v0, col.r,col.g,col.b,col.a},
+                        {x1,y0, g->u1,g->v0, col.r,col.g,col.b,col.a},
+                        {x1,y1, g->u1,g->v1, col.r,col.g,col.b,col.a},
+                        {x0,y0, g->u0,g->v0, col.r,col.g,col.b,col.a},
+                        {x1,y1, g->u1,g->v1, col.r,col.g,col.b,col.a},
+                        {x0,y1, g->u0,g->v1, col.r,col.g,col.b,col.a},
+                    };
+                    vpush(a, 6 * 8);
+                    memcpy(a->verts + a->vcount, verts, sizeof verts);
+                    a->vcount += 6 * 8;
+                }
+                x += g->xadv;
+            }
+            k += a2;
+        }
         maxw = fmaxf(maxw, x);
-        if (ws < len && s[ws] == '\n') { x = 0; y += line_h; i = ws + 1; continue; }
-        if (ws < len) { // space
-            int c = ' ';
-            x += fo->chars[c - FIRST_CHAR].xadvance * scale;
-            i = ws + 1;
-        } else i = ws;
+        i = j;
     }
-    return vv_v2(fmaxf(maxw, x), y + line_h);
+    return vv_v2(fmaxf(maxw, x) * sc, y + line_h);
 }
 
 vv_Vec2 vv_app_measure(void *ud, const char *s, int len, vv_FontID font,
                        float size, float wrap_width) {
     vv_App *a = ud;
-    return text_layout(a, font_of(a, font), s, len, size, wrap_width, 0, 0,
-                       (vv_Color){0}, false);
+    return text_layout(a, font, s, len, size, wrap_width, 0, 0, (vv_Color){0}, false);
 }
 
 // ---- backend vtable -------------------------------------------------------
@@ -355,15 +453,16 @@ static void draw_rects(void *ctx, const vv_CmdRect *rects, int n) {
 
 static void draw_text(void *ctx, const vv_CmdText *runs, int n) {
     vv_App *a = ctx;
-    const Font *fo = font_of(a, n > 0 ? runs[0].font : 0);
-    if (!fo) return;
+    if (!a->fs->atlas) return;
     a->vcount = 0;
     for (int i = 0; i < n; i++) {
         const vv_CmdText *t = &runs[i];
-        // origin.y is the baseline; our text_layout places from top, so shift up
-        // by ascent to align the baseline.
+        const Font *fo = font_of(a->fs, t->font);
+        if (!fo) continue;
+        // origin.y is the baseline; text_layout places from the line top, so
+        // shift up by the ascent to align the baseline.
         float top = t->origin.y - fo->ascent * (t->size / BAKE_PX);
-        text_layout(a, fo, t->utf8, (int)t->len, t->size, 0,
+        text_layout(a, t->font, t->utf8, (int)t->len, t->size, 0,
                     t->origin.x, top, t->color, true);
     }
     if (a->vcount == 0) return;
@@ -371,7 +470,7 @@ static void draw_text(void *ctx, const vv_CmdText *runs, int n) {
     glUseProgram(a->text_prog);
     glUniform2f(a->text_u_vp, (float)a->fb_w / a->dpi, (float)a->fb_h / a->dpi);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, fo->tex);
+    glBindTexture(GL_TEXTURE_2D, a->fs->atlas);
     glUniform1i(a->text_u_tex, 0);
     glBindVertexArray(a->vao);
     glBindBuffer(GL_ARRAY_BUFFER, a->vbo);
@@ -409,6 +508,8 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     vv_App *a = calloc(1, sizeof(vv_App));
+    a->fs = calloc(1, sizeof(FontSystem));
+    a->owns_fs = true;
     a->win = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!a->win) { fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); free(a); return NULL; }
     a->win_id = SDL_GetWindowID(a->win);
@@ -463,8 +564,8 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
     a->rect_prog = parent->rect_prog; a->text_prog = parent->text_prog;
     a->rect_u_vp = parent->rect_u_vp; a->text_u_vp = parent->text_u_vp;
     a->text_u_tex = parent->text_u_tex;
-    memcpy(a->fonts, parent->fonts, sizeof a->fonts);
-    a->font_count = parent->font_count;
+    a->fs = parent->fs;   // shared atlas + glyph cache + fonts (GL objects shared)
+    a->owns_fs = false;
     a->shares_gl = true;
 
     // VAOs are not shared between contexts; give the child its own.
@@ -492,6 +593,11 @@ void vv_app_destroy(vv_App *a) {
     unreg_window(a);
     if (a->clip_cache) SDL_free(a->clip_cache);
     for (int i = 0; i < 8; i++) if (a->cursors[i]) SDL_DestroyCursor(a->cursors[i]);
+    if (a->owns_fs && a->fs) {
+        for (int i = 0; i < a->fs->font_count; i++) free(a->fs->fonts[i].ttf);
+        if (a->fs->atlas) glDeleteTextures(1, &a->fs->atlas);
+        free(a->fs);
+    }
     free(a->verts);
     SDL_GL_DestroyContext(a->gl);
     SDL_DestroyWindow(a->win);

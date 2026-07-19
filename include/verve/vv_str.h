@@ -44,6 +44,22 @@ static inline vv_StrHeader *vv_str_header(vv_Str s) {
 static inline size_t vv_str_len(vv_Str s) { return s ? vv_str_header(s)->len : 0; }
 size_t vv_cstr_len(const char *s); // strlen, NULL-safe
 
+// ---- UTF-8 (§10) -----------------------------------------------------------
+// Text is UTF-8 throughout. Storage stays byte-indexed; these let callers step
+// and count by codepoint so editing lands on character boundaries, not mid-byte.
+
+// Decode the codepoint at `s`; `*adv` (nullable) gets the byte length (1..4).
+// Returns U+FFFD and adv=1 on a malformed lead/continuation byte.
+uint32_t vv_utf8_decode(const char *s, int *adv);
+// Byte index of the next / previous codepoint boundary around byte index `i`
+// within a buffer of `len` bytes (clamped to [0,len]).
+int      vv_utf8_next(const char *s, int len, int i);
+int      vv_utf8_prev(const char *s, int i);
+// Number of codepoints in the first `len` bytes.
+int      vv_utf8_count(const char *s, int len);
+// Encode `cp` into `out` (needs 4 bytes); returns bytes written (1..4).
+int      vv_utf8_encode(uint32_t cp, char *out);
+
 // ---- construction ----------------------------------------------------------
 
 // Uninitialized data of `cap` bytes (+NUL). len is set to `cap`; callers that
