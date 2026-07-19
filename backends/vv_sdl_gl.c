@@ -759,6 +759,7 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
     SDL_Event e;
     in->wheel = 0;
     in->text_len = 0; in->text[0] = 0;
+    in->preedit_len = 0; in->preedit[0] = 0;
     in->key_count = 0;
     SDL_Keymod mod = SDL_GetModState();
     in->shift = (mod & SDL_KMOD_SHIFT) != 0;
@@ -784,6 +785,12 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
                 in->text[in->text_len] = 0;
                 break;
             }
+            case SDL_EVENT_TEXT_EDITING: { // IME composition (preedit, uncommitted)
+                for (const char *p = e.edit.text; p && *p && in->preedit_len < (int)sizeof in->preedit - 1; p++)
+                    in->preedit[in->preedit_len++] = *p;
+                in->preedit[in->preedit_len] = 0;
+                break;
+            }
             case SDL_EVENT_KEY_DOWN: {
                 vv_Key k = map_key(e.key.key);
                 if (k != VV_KEY_NONE && in->key_count < VV_INPUT_KEY_CAP) {
@@ -804,6 +811,7 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
 static void input_begin_frame(vv_Input *in) {
     in->wheel = 0;
     in->text_len = 0; in->text[0] = 0;
+    in->preedit_len = 0; in->preedit[0] = 0;
     in->key_count = 0;
     SDL_Keymod mod = SDL_GetModState();
     in->shift = (mod & SDL_KMOD_SHIFT) != 0;
@@ -827,6 +835,7 @@ int vv_app_pump_all(void) {
             case SDL_EVENT_MOUSE_BUTTON_UP:   id = e.button.windowID; break;
             case SDL_EVENT_MOUSE_WHEEL:       id = e.wheel.windowID;  break;
             case SDL_EVENT_TEXT_INPUT:        id = e.text.windowID;   break;
+            case SDL_EVENT_TEXT_EDITING:      id = e.edit.windowID;   break;
             case SDL_EVENT_KEY_DOWN:          id = e.key.windowID;    break;
             case SDL_EVENT_WINDOW_CLOSE_REQUESTED: id = e.window.windowID; break;
             default: continue;
@@ -849,6 +858,11 @@ int vv_app_pump_all(void) {
                 for (const char *p = e.text.text; *p && in->text_len < VV_INPUT_TEXT_CAP - 1; p++)
                     in->text[in->text_len++] = *p;
                 in->text[in->text_len] = 0;
+                break;
+            case SDL_EVENT_TEXT_EDITING:
+                for (const char *p = e.edit.text; p && *p && in->preedit_len < (int)sizeof in->preedit - 1; p++)
+                    in->preedit[in->preedit_len++] = *p;
+                in->preedit[in->preedit_len] = 0;
                 break;
             case SDL_EVENT_KEY_DOWN: {
                 vv_Key k = map_key(e.key.key);

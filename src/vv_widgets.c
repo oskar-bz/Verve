@@ -644,6 +644,18 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
     vv_end_box(ctx);
   }
 
+  // IME preedit: the in-progress composition, drawn (underlined) at the caret
+  // but not committed to `buf` — SDL delivers it via vv_Input.preedit.
+  if (focused && ctx->input.preedit_len > 0) {
+    vv_box_keyed(ctx, "ime", 3,
+                 (vv_LayoutDecl){.has_absolute = true, .absolute = vv_rect(cx + 2, 4, 0, 26)},
+                 (vv_Style){.bg = {0}, .border_width = (vv_Edges){0, 0, 0, 2},
+                            .border_color = t->accent});
+    vv_text(ctx, ctx->input.preedit,
+            (vv_Style){.fg = t->accent_hi, .font_size = size, .font = t->font});
+    vv_end_box(ctx);
+  }
+
   vv_end_box(ctx);
   if (changed) vv_emit(ctx, change, vv_ps(buf));
   return id;
@@ -873,6 +885,14 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
                                  .absolute = vv_rect(cx, cy, 2, line_h)},
                  (vv_Style){.bg = t->accent, .radius = vv_r(1)});
     vv_end_box(ctx);
+    if (ctx->input.preedit_len > 0) { // IME composition at the caret
+      vv_box_keyed(ctx, "ime", 3,
+                   (vv_LayoutDecl){.has_absolute = true, .absolute = vv_rect(cx + 2, cy, 0, line_h),
+                                   .cross = VV_ALIGN_CENTER},
+                   (vv_Style){.bg = {0}, .border_width = (vv_Edges){0, 0, 0, 2}, .border_color = t->accent});
+      vv_text(ctx, ctx->input.preedit, (vv_Style){.fg = t->accent_hi, .font_size = size, .font = t->font});
+      vv_end_box(ctx);
+    }
   }
 
   vv_end_box(ctx);

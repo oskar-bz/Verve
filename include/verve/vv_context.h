@@ -33,8 +33,10 @@ typedef struct {
     bool    right_down;   // right button (context menus)
     float   wheel;
 
-    char        text[VV_INPUT_TEXT_CAP];  // UTF-8 typed this frame
+    char        text[VV_INPUT_TEXT_CAP];  // UTF-8 committed this frame
     uint8_t     text_len;
+    char        preedit[64];              // IME composition in progress (§10, not committed)
+    uint8_t     preedit_len;
     vv_KeyEvent keys[VV_INPUT_KEY_CAP];    // discrete key presses this frame
     uint8_t     key_count;
     bool        shift, ctrl, alt;

@@ -368,7 +368,8 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
         ctx->hovered_id != prev_hover || ctx->focused_id != prev_focus ||
         down_edge || moved_sub || ctx->active_id != 0 || ctx->sb_drag != 0 ||
         ctx->input.wheel != 0.0f || ctx->input.key_count > 0 ||
-        ctx->input.text_len > 0 || ctx->tree_dirty || ctx->frame_index == 1;
+        ctx->input.text_len > 0 || ctx->input.preedit_len > 0 ||
+        ctx->tree_dirty || ctx->frame_index == 1;
 }
 
 // Step 2: reset the root and build stack so view code can populate the tree.

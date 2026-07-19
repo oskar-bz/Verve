@@ -60,6 +60,13 @@ int      vv_utf8_count(const char *s, int len);
 // Encode `cp` into `out` (needs 4 bytes); returns bytes written (1..4).
 int      vv_utf8_encode(uint32_t cp, char *out);
 
+// Grapheme cluster boundaries (a reduced UAX #29): a base plus its combining
+// marks / variation selectors, ZWJ-joined emoji, and regional-indicator flag
+// pairs count as ONE character — so one arrow or backspace moves/deletes one
+// *perceived* character. Byte indices into a `len`-byte buffer, clamped.
+int      vv_grapheme_next(const char *s, int len, int i);
+int      vv_grapheme_prev(const char *s, int len, int i);
+
 // ---- construction ----------------------------------------------------------
 
 // Uninitialized data of `cap` bytes (+NUL). len is set to `cap`; callers that
