@@ -85,6 +85,16 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
 uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
                       float height, const char *placeholder, vv_Msg change);
 
+// A draggable divider for resizable multi-panel layouts. Place it between two
+// panes inside a VV_ROW (a vertical bar that resizes horizontally) or a
+// VV_COLUMN (a horizontal bar, vertically). `size` is the current size of the
+// pane before it — which you keep in app state and set as that pane's fixed
+// size. While dragged it emits `resize` with the new size in `.as_float`,
+// clamped to [min,max]; update() writes it back. The panes FLIP-spring, so the
+// resize (and any reset) animates for free.
+uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir,
+                     float size, float min, float max, vv_Msg resize);
+
 // ---- overlay chrome: menus, popovers, tooltips (§ in-app overlay) ----------
 // The painter is strict tree order, so overlays must be built LAST in the view
 // (as the final children of your root) to sit on top of everything. See

@@ -834,6 +834,35 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
   return id;
 }
 
+// ---- splitter -------------------------------------------------------------
+// Because view() is pure, the split size lives in app state; the splitter only
+// reports drags. We capture the size at grab (per-node vv_state) and emit
+// grab_size + drag_delta so tracking is 1:1 regardless of pointer acceleration.
+
+uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir,
+                     float size, float min, float max, vv_Msg resize) {
+  const vv_Theme *t = vv_theme();
+  bool horiz = (dir == VV_ROW);
+  vv_Style hover = {.bg = t->accent};
+  vv_Style active = {.bg = t->accent_hi};
+  vv_LayoutDecl d = horiz
+      ? (vv_LayoutDecl){.w = vv_fixed(6), .h = vv_grow(1), .focusable = true}
+      : (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(6), .focusable = true};
+  uint32_t id = vv_box_keyed(ctx, key, strlen(key), d,
+                             (vv_Style){.bg = t->border, .hover = &hover, .active = &active});
+  float *grab = vv_state(ctx, id, float);
+  if (vv_pressed(ctx, id)) *grab = size;
+  if (vv_active(ctx, id)) {
+    vv_Vec2 dd = vv_drag_delta(ctx, id);
+    float v = *grab + (horiz ? dd.x : dd.y);
+    if (v < min) v = min;
+    if (v > max) v = max;
+    vv_emit(ctx, resize, vv_pf(v));
+  }
+  vv_end_box(ctx);
+  return id;
+}
+
 // ---- overlay chrome: menus, popovers, tooltips ----------------------------
 // Overlays paint on top only if built last in the tree (the painter is strict
 // tree order). The menu system self-manages which menu is open via one static —

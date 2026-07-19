@@ -602,6 +602,7 @@ while (vv_app_pump_all() > 0) {         // routes events to each window by ID
 | Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
 | Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
 | A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
+| Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 
