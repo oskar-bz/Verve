@@ -163,6 +163,14 @@ void     vv_end_box(vv_Ctx *ctx);
 uint32_t vv_text_keyed(vv_Ctx *ctx, const char *key, size_t klen,
                        const char *utf8, vv_Style style);
 
+// Custom-draw leaf (§14.3): a box laid out by `decl` whose content is rendered
+// by the backend calling `draw->fn(draw->ud, rect)` — an escape hatch to raw GPU
+// drawing (a viewport, a plot, a scene) inside the reconciled tree. `draw` must
+// outlive the frame (point at app-persistent memory, not the frame arena). The
+// node is a normal leaf otherwise: it hit-tests, sizes, and animates its rect.
+uint32_t vv_custom(vv_Ctx *ctx, const char *key, size_t klen,
+                   const vv_CustomDraw *draw, vv_LayoutDecl decl);
+
 // Convenience wrappers with no explicit key.
 static inline uint32_t vv_box(vv_Ctx *ctx, vv_LayoutDecl d, vv_Style s) {
     return vv_box_keyed(ctx, NULL, 0, d, s);

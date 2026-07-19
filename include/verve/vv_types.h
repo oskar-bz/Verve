@@ -36,6 +36,12 @@ typedef struct {
 typedef uint32_t vv_FontID;
 typedef uint32_t vv_TexID;
 
+// A custom-draw escape hatch (§14.3): `fn` is called by the backend with the
+// node's on-screen rect (logical coords) to do arbitrary rendering there — a
+// GPU viewport, a plot, a scene. The backend scissors to the rect and restores
+// its own state afterward. `ud` is the app's data. See vv_custom().
+typedef struct { void (*fn)(void *ud, vv_Rect rect); void *ud; } vv_CustomDraw;
+
 // ---- constructors (terse, designed for call-site use) --------------------
 
 static inline vv_Vec2  vv_v2(float x, float y)            { return (vv_Vec2){x, y}; }

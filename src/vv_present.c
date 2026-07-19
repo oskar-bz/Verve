@@ -200,6 +200,14 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
         r.x = cx - r.w * 0.5f; r.y = cy - r.h * 0.5f;
     }
 
+    // Custom-draw leaf (§14.3): hand the backend the rect and the app callback.
+    if (n->custom) {
+        vv_Command *cmd = push_cmd(ctx);
+        cmd->kind = VV_CMD_CUSTOM;
+        cmd->as.custom = (vv_CmdCustom){ .id = 0, .payload = (void *)n->custom, .rect = r };
+        return;
+    }
+
     if (n->flags & VV_FLAG_TEXT) {
         vv_Command *cmd = push_cmd(ctx);
         cmd->kind = VV_CMD_TEXT;

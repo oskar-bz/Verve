@@ -371,6 +371,8 @@ static void clip_set(void *ctx, const char *s) { (void)ctx; SDL_SetClipboardText
 
 // ---- app ------------------------------------------------------------------
 
+static void backend_custom(void *ctx, uint32_t id, void *payload, vv_Rect r);
+
 vv_App *vv_app_create(const char *title, int w, int h) {
     if (!SDL_Init(SDL_INIT_VIDEO)) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return NULL; }
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
@@ -404,6 +406,7 @@ vv_App *vv_app_create(const char *title, int w, int h) {
         .push_scissor = push_scissor, .pop_scissor = pop_scissor,
         .clipboard_get = clip_get, .clipboard_set = clip_set,
         .measure_text = vv_app_measure,
+        .custom = backend_custom,
     };
     a->dpi = 1.0f;
     return a;
@@ -567,6 +570,29 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
         }
     }
     return true;
+}
+
+// Custom-draw dispatch (§14.3): scissor+viewport to the node's rect (in
+// framebuffer pixels, y-flipped) and invoke the app callback, then restore the
+// GL state the UI renderer relies on. The app can do arbitrary GL in `fn`.
+static void backend_custom(void *ctx, uint32_t id, void *payload, vv_Rect r) {
+    (void)id;
+    vv_App *a = ctx;
+    const vv_CustomDraw *cb = payload;
+    if (!cb || !cb->fn) return;
+    float s = a->dpi;
+    int x = (int)(r.x * s), w = (int)(r.w * s), h = (int)(r.h * s);
+    int y = a->fb_h - (int)((r.y + r.h) * s);
+
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    glViewport(x, y, w, h);
+    glEnable(GL_SCISSOR_TEST); glScissor(x, y, w, h);
+    cb->fn(cb->ud, r);
+    // Restore what the UI batches assume (they rebind program/VAO/attribs).
+    glViewport(vp[0], vp[1], vp[2], vp[3]);
+    glDisable(GL_SCISSOR_TEST);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 void vv_app_frame_begin(vv_App *a, vv_Color clear) {

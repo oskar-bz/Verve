@@ -397,6 +397,29 @@ Notes:
 - Give containers a stable `key` when they live in loops so identity — and thus
   animation and `vv_state` — survives reordering.
 
+### Raw-GPU content: the custom-draw hatch
+
+When a node's pixels come from your own GPU code — a 3D scene, a plot, a shader
+viewport — reach for `vv_custom` instead of Verve's primitives. It places a leaf
+that lays out, hit-tests, and spring-animates its rect like any box, but whose
+interior is filled by a callback the backend invokes with the on-screen rect:
+
+```c
+static void draw_canvas(void *ud, vv_Rect r) { /* raw GL into r */ }
+
+App *app = ...;
+app->cb = (vv_CustomDraw){ .fn = draw_canvas, .ud = app }; // must outlive the frame
+
+// in view():
+vv_custom(c, "canvas", 6, &app->cb,
+          VV_LAYOUT(.w = vv_grow(1), .h = vv_grow(1)));
+```
+
+The backend scissors to the node's rect and restores GL state around the call,
+so your drawing can't corrupt the UI and the UI can't clip into your viewport.
+`draw` must point at app-persistent memory (not the frame arena). See
+`examples/playground.c` for a live shader viewport wrapped in Verve controls.
+
 ---
 
 ## 9. Performance: idle mode and rebuild gating
@@ -518,6 +541,7 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 | Logic/view split + virtualized 10k-row table | `examples/table.c` |
 | A pure scorer driving an animated fuzzy finder | `examples/finder.c` |
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
+| Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 

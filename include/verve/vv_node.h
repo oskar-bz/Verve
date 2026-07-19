@@ -54,6 +54,10 @@ typedef struct vv_Node {
     void    *widget_state;
     uint32_t widget_state_size;
 
+    // Custom-draw leaf (§14.3): when set, present emits a VV_CMD_CUSTOM with this
+    // node's actual_rect instead of a fill. Points at app-persistent memory.
+    const vv_CustomDraw *custom;
+
     // Text leaves stash their frame-arena string copy here (separate from
     // widget_state, which the freelist allocator owns).
     const char *text;

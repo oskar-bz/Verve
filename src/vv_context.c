@@ -130,6 +130,7 @@ static uint32_t open_node(vv_Ctx *ctx, const char *key, size_t klen,
     n->next_sibling = VV_NIL;
     n->child_count  = 0;
     n->on_move      = VV_MSG_NONE; // re-subscribed each build via vv_on()
+    n->custom       = NULL;        // re-set each build via vv_custom()
 
     // Append to parent's freshly-reset child list.
     if (parent->first_child == VV_NIL) {
@@ -228,6 +229,13 @@ uint32_t vv_text_keyed(vv_Ctx *ctx, const char *key, size_t klen,
     n->text_len = (uint32_t)len;
     n->flags |= VV_FLAG_TEXT;
     return idx;
+}
+
+uint32_t vv_custom(vv_Ctx *ctx, const char *key, size_t klen,
+                   const vv_CustomDraw *draw, vv_LayoutDecl decl) {
+    uint32_t idx = open_node(ctx, key, klen, decl, (vv_Style){0});
+    vv_pool_get(&ctx->pool, idx)->custom = draw;
+    return idx; // a leaf: no children, so no matching vv_end_box
 }
 
 // ---- reconciliation ------------------------------------------------------
