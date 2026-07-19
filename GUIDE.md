@@ -509,6 +509,7 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 | Drag & drop with FLIP-spring reorder | `examples/kanban.c` |
 | Perceptual color (OKLab, contrast, ramps) | `examples/palette.c` |
 | Per-node color springs over a big grid | `examples/habit.c` |
+| State-driven transitions (tabs, async, toasts) | `examples/transitions.c` |
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
