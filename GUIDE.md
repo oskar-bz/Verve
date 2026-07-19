@@ -247,8 +247,15 @@ vv_slider(c, "vol", vol, 0.f, 1.f, MSG_VOL);               // emits new float
 vv_drag_number(c, "x", x, /*speed*/0.5f, -100, 100, MSG_X);
 vv_list_item(c, "row3", "Item 3", selected, MSG_PICK, vv_pi(3));
 vv_text_field(c, "name", buf, sizeof buf, "Name…", MSG_NAME); // edits buf in place
+vv_text_area(c, "body", buf, sizeof buf, /*height*/0, NULL, MSG_BODY); // multi-line
+vv_date_field(c, "day", packed_date, MSG_DAY);            // calendar; emits packed date
 vv_label(c, "Plain");  vv_label_muted(c, "Secondary");
 ```
+
+Larger stateful widgets live alongside these — `vv_splitter` (resizable panels),
+`vv_menubar`/`vv_menu_*`, `vv_popover_*`, `vv_tooltip`, `vv_date_field`. They're
+covered under **Desktop features** below; the point is they're all just functions
+in the same public API, with no privileged access.
 
 Controlled widgets (checkbox/toggle/slider) take the *current* value to render
 and emit the *new* value in the payload — your `update` writes it back. Read the
