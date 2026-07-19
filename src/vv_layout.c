@@ -328,8 +328,13 @@ static void position_children(vv_NodePool *pool, uint32_t idx) {
         vv_Node *ch = P(c);
         if (ch->decl.has_absolute) {
             vv_Rect a = ch->decl.absolute;
-                ch->layout_rect.x = ox + a.x;
-            ch->layout_rect.y = oy + a.y;
+            // z-lifted overlays paint in a top-level pass (§ overlays), so their
+            // absolute position is window-space, not parent-relative — otherwise a
+            // deeply nested popover/menu is offset by every ancestor's origin.
+            float bx = ch->decl.z > 0 ? 0.0f : ox;
+            float by = ch->decl.z > 0 ? 0.0f : oy;
+            ch->layout_rect.x = bx + a.x;
+            ch->layout_rect.y = by + a.y;
             continue;
         }
         if (ch->flags & VV_FLAG_EXITING) continue; // corpses keep last rect (§3.3)

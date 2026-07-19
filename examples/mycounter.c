@@ -93,6 +93,8 @@ int main(int argc, char **argv) {
       vv_app_frame_begin(app, vv_rgb(24.f / 255, 24.f / 255, 24.f / 255));
       vv_render(vv_app_backend(app), cmds, w, h, dpi);
       vv_app_frame_end(app);
+    } else {
+      vv_app_wait_event(app, 16); // idle: sleep instead of busy-spinning
     }
   }
 

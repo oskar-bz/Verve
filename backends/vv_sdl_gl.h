@@ -19,6 +19,12 @@ vv_Backend *vv_app_backend(vv_App *app);
 // the user asked to quit. `dpi_scale` (nullable) receives the display scale.
 bool        vv_app_pump(vv_App *app, vv_Input *in);
 
+// Block up to `timeout_ms` for the next event without consuming it, then return.
+// Call this on idle frames (when vv_run_frame returns NULL) so the loop sleeps
+// instead of busy-spinning — that spin starves the compositor's frame cadence,
+// which shows up as animations that only advance when you move the mouse.
+void        vv_app_wait_event(vv_App *app, int timeout_ms);
+
 // ---- multi-window (§ design open-question 2: the app owns windows) ---------
 // Open a second window that shares the parent's GL context — so shaders, the
 // glyph atlas, and loaded fonts are reused, only per-window VAO/scissor state is

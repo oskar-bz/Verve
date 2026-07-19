@@ -176,6 +176,18 @@ void vv_end_box(vv_Ctx *ctx) {
     ctx->depth--;
 }
 
+// Mark a whole subtree culled so virtualization frees it without exit anims —
+// otherwise a scrolled-away row's children become EXITING corpses that paint on
+// top of the list (§5.5).
+static void cull_subtree(vv_NodePool *p, uint32_t idx) {
+    for (uint32_t c = vv_pool_get(p, idx)->first_child; c != VV_NIL;) {
+        vv_Node *n = vv_pool_get(p, c);
+        n->flags |= VV_FLAG_CULLED;
+        cull_subtree(p, c);
+        c = n->next_sibling;
+    }
+}
+
 void vv_rows(vv_Ctx *ctx, int count, float row_h,
              void (*fn)(vv_Ctx *ctx, int index, void *ud), void *ud) {
     if (count <= 0 || row_h <= 0.0f) return;
@@ -198,9 +210,13 @@ void vv_rows(vv_Ctx *ctx, int count, float row_h,
     if (last > count) last = count;
     if (last < first) last = first;
 
+    // Spacers get stable keys so they don't churn identity (leaving corpses) as
+    // the visible range shifts, and VV_INSTANT_RECT so their height snaps —
+    // animating it would make rows lag the scroll.
     if (first > 0) { // spacer above
-        vv_box(ctx, (vv_LayoutDecl){ .w = vv_grow(1), .h = vv_fixed((float)first * row_h) },
-               (vv_Style){0});
+        vv_box_keyed(ctx, "\x01spacer_top", 11,
+               (vv_LayoutDecl){ .w = vv_grow(1), .h = vv_fixed((float)first * row_h) },
+               (vv_Style){ .transition_mask = VV_INSTANT_RECT });
         vv_end_box(ctx);
     }
     for (int i = first; i < last; i++) {
@@ -212,12 +228,14 @@ void vv_rows(vv_Ctx *ctx, int count, float row_h,
         // the exit spring so a scroll leaves no fading corpses (§5.5).
         vv_pool_get(&ctx->pool, row)->flags |= VV_FLAG_CULLED;
         fn(ctx, i, ud);
+        cull_subtree(&ctx->pool, row); // children too, or they exit-animate on top
         vv_end_box(ctx);
     }
     if (last < count) { // spacer below
-        vv_box(ctx, (vv_LayoutDecl){ .w = vv_grow(1),
-                                     .h = vv_fixed((float)(count - last) * row_h) },
-               (vv_Style){0});
+        vv_box_keyed(ctx, "\x01spacer_bot", 11,
+               (vv_LayoutDecl){ .w = vv_grow(1),
+                                .h = vv_fixed((float)(count - last) * row_h) },
+               (vv_Style){ .transition_mask = VV_INSTANT_RECT });
         vv_end_box(ctx);
     }
 }

@@ -498,6 +498,12 @@ void vv_app_destroy(vv_App *a) {
 vv_Input *vv_app_input(vv_App *a) { return &a->input; }
 bool vv_app_should_close(vv_App *a) { return a->should_close; }
 
+void vv_app_wait_event(vv_App *a, int timeout_ms) {
+    (void)a;
+    // NULL event => wait but leave it queued for the next pump to process.
+    SDL_WaitEventTimeout(NULL, timeout_ms);
+}
+
 vv_Backend *vv_app_backend(vv_App *a) { return &a->backend; }
 
 void vv_app_size(vv_App *a, int *w, int *h, float *dpi) {

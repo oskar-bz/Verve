@@ -801,7 +801,8 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
       float ly = (float)ml_line_index(buf, ls) * line_h;
       vv_box_keyed(ctx, vv_fmt(ctx, "sel%d", ls), 0,
                    (vv_LayoutDecl){.has_absolute = true,
-                                   .absolute = vv_rect(pad + ax, pad + ly, bx - ax + extra, line_h)},
+                                   // absolute is content-relative (post-padding), so no extra pad
+                                   .absolute = vv_rect(ax, ly, bx - ax + extra, line_h)},
                    (vv_Style){.bg = vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.30f),
                               .radius = vv_r(2)});
       vv_end_box(ctx);
@@ -824,7 +825,7 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
     vv_box_keyed(ctx, "caret", 7,
                  (vv_LayoutDecl){.w = vv_fixed(2), .h = vv_fixed(line_h),
                                  .has_absolute = true,
-                                 .absolute = vv_rect(pad + cx, pad + cy, 2, line_h)},
+                                 .absolute = vv_rect(cx, cy, 2, line_h)},
                  (vv_Style){.bg = t->accent, .radius = vv_r(1)});
     vv_end_box(ctx);
   }

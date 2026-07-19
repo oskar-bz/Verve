@@ -38,7 +38,17 @@ typedef struct {
 
   int  want_windows;      // requested new preview windows (drained by the loop)
   bool quit;
+
+  // Cross-window invalidation: each window has its OWN vv_Ctx with its own
+  // rebuild gating, so a change made in the main window does not, by itself,
+  // make a preview window rebuild. We bump doc_version on every doc edit; the
+  // loop invalidates any preview whose last-seen version differs. Without this,
+  // a preview only refreshes when its own input (e.g. a hover) forces a build —
+  // the "it only updates when I mouse over it" bug.
+  int doc_version;
 } App;
+
+static void doc_touched(App *a) { a->doc_version++; }
 
 // ---- native dialog callbacks (fire during the pump, on the event thread) ---
 static void on_open(void *ud, const char *path) {
@@ -51,6 +61,7 @@ static void on_open(void *ud, const char *path) {
       size_t n = fread(a->text, 1, sizeof a->text - 1, f);
       a->text[n] = 0; fclose(f);
       snprintf(a->status, sizeof a->status, "Opened %s (%zu bytes)", path, n);
+      doc_touched(a);
     }
   }
   if (a->ctx) vv_invalidate(a->ctx);
@@ -73,8 +84,8 @@ static void on_save(void *ud, const char *path) {
 static void update(void *st, vv_Event ev) {
   App *a = st;
   switch (ev.msg) {
-  case MSG_EDIT: snprintf(a->status, sizeof a->status, "%zu chars", strlen(a->text)); break;
-  case MSG_NEW:  a->text[0] = 0; snprintf(a->status, sizeof a->status, "New note"); break;
+  case MSG_EDIT: snprintf(a->status, sizeof a->status, "%zu chars", strlen(a->text)); doc_touched(a); break;
+  case MSG_NEW:  a->text[0] = 0; snprintf(a->status, sizeof a->status, "New note"); doc_touched(a); break;
   case MSG_OPEN: vv_app_open_file(a->app, "Text", "txt;md", on_open, a); break;
   case MSG_SAVE: vv_app_save_file(a->app, "Text", "txt;md", "note.txt", on_save, a); break;
   case MSG_QUIT: a->quit = true; break;
@@ -84,6 +95,7 @@ static void update(void *st, vv_Event ev) {
     const char *s = ev.data.as_str;
     size_t cur = strlen(a->text), add = strlen(s);
     if (cur + add < sizeof a->text) { memcpy(a->text + cur, s, add + 1); }
+    doc_touched(a);
     break;
   }
   }
@@ -220,7 +232,7 @@ static void view_child(vv_Ctx *c, void *st) {
   }
 }
 
-typedef struct { vv_App *app; vv_Ctx ctx; bool used; } Child;
+typedef struct { vv_App *app; vv_Ctx ctx; bool used; int seen_version; } Child;
 
 int main(void) {
   vv_App *app = vv_app_create("Verve \xc2\xb7 Showcase", 900, 640);
@@ -282,6 +294,11 @@ int main(void) {
         vv_app_destroy(children[i].app);
         children[i].used = false;
         continue;
+      }
+      // The doc changed in another window -> force this preview to rebuild.
+      if (children[i].seen_version != state.doc_version) {
+        vv_invalidate(&children[i].ctx);
+        children[i].seen_version = state.doc_version;
       }
       int cw, ch; float cdpi; vv_app_size(children[i].app, &cw, &ch, &cdpi);
       vv_set_window(&children[i].ctx, (float)cw, (float)ch, cdpi);

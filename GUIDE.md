@@ -610,6 +610,23 @@ while (vv_app_pump_all() > 0) {         // routes events to each window by ID
 }
 ```
 
+**Cross-window invalidation (gotcha).** Each window has its *own* `vv_Ctx` with
+its own rebuild gating, so a change made in one window does not, by itself, make
+another window rebuild — a second window mirroring shared state will look stale
+until its own input (e.g. a hover) forces a build. When shared state changes,
+invalidate the other windows explicitly. The cheap pattern is a version counter:
+bump it on every edit, and invalidate any window whose last-seen version differs.
+
+```c
+if (win.seen_version != state.version) { vv_invalidate(&win.ctx); win.seen_version = state.version; }
+```
+
+`examples/showcase.c`'s live preview does exactly this. Idle-mode single-window
+apps should also sleep when `vv_run_frame` returns NULL — call
+`vv_app_wait_event(app, 16)` instead of busy-spinning, or the busy loop can
+starve the compositor's frame cadence and make animations look like they only
+advance when you move the mouse.
+
 **Resizable panels (`vv_splitter`).** Multi-panel layouts are just nested
 `VV_ROW`/`VV_COLUMN` with `vv_fixed`/`vv_grow`. To make a divide draggable, keep
 the pane's size in app state and drop a `vv_splitter` between the panes; it emits

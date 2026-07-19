@@ -106,6 +106,8 @@ int main(void) {
       vv_app_frame_begin(app, vv_rgb(0.09f, 0.10f, 0.12f));
       vv_render(vv_app_backend(app), cmds, w, h, dpi);
       vv_app_frame_end(app);
+    } else {
+      vv_app_wait_event(app, 16); // idle: sleep instead of busy-spinning
     }
   }
   vv_shutdown(&ctx);
