@@ -466,6 +466,39 @@ Minimal wiring for any backend:
 
 ---
 
+## 12. Debugging: the drop-in inspector
+
+`examples/inspect/vv_inspect.h` is a single-header, DevTools-style inspector you
+attach to any app. It reads your retained pool read-only and overlays a tree +
+properties panel on the right edge — including the one thing a DOM inspector
+can't show: **`layout_rect` (target) vs `actual_rect` (where the spring is right
+now)**, plus per-node spring velocity and settled/springing state. Hover or click
+the app to inspect a node; click a tree row to pin it.
+
+Attaching is `#include` + three lines in your loop — nothing in your
+`view`/`update` changes:
+
+```c
+#define VV_INSPECT_IMPL     // in exactly one .c file
+#include "vv_inspect.h"
+...
+vv_Inspector ins;
+vv_inspect_init(&ins, &ctx, my_measure, my_ud);   // once
+
+// per frame, wrapping your existing app frame:
+vv_Input app_in = vv_inspect_split(&ins, in, w, h);      // routes the pointer
+vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &app_in, update, view, &state);
+vv_CommandBuffer *ov   = vv_inspect_render(&ins, dt, w, h, dpi);
+if (cmds) vv_render(be, cmds, w, h, dpi);   // app, then...
+if (ov)   vv_render(be, ov,  w, h, dpi);    // ...inspector on top
+```
+
+Toggle with `vv_inspect_toggle(&ins)` (bind it to any key your backend exposes).
+It's compile-in and same-process — an overlay, not attach-to-a-running-process —
+and read-only for now. See `examples/inspector.c` for the full wiring.
+
+---
+
 ## Where to look next
 
 | You want… | Read |
@@ -476,6 +509,7 @@ Minimal wiring for any backend:
 | Drag & drop with FLIP-spring reorder | `examples/kanban.c` |
 | Perceptual color (OKLab, contrast, ramps) | `examples/palette.c` |
 | Per-node color springs over a big grid | `examples/habit.c` |
+| A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 

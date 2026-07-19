@@ -53,7 +53,7 @@ demo: $(DEMO_BIN)
 # Windowed examples share the SDL3/GL backend build (explicit, not pattern, to
 # avoid clashing with the headless examples rule).
 gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD)/kanban \
-     $(BUILD)/palette $(BUILD)/habit
+     $(BUILD)/palette $(BUILD)/habit $(BUILD)/inspector
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -72,6 +72,9 @@ $(BUILD)/palette: examples/palette.c backends/vv_sdl_gl.c $(LIB)
 $(BUILD)/habit: examples/habit.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/inspector: examples/inspector.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) -Iexamples/inspect $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 
 # Hot-reload demo: the view is a .so the host dlopen's and swaps on change.
 # Run ./build/hotdemo, then edit examples/hot/view.c and `make hot` to rebuild
