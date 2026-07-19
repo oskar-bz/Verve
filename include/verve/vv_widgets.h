@@ -78,6 +78,48 @@ uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v);
 uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
                        const char *placeholder, vv_Msg change);
 
+// Multi-line editor. Like vv_text_field but Enter inserts a newline, Up/Down
+// move between lines (keeping a goal column), Home/End act per line, and the
+// content scrolls vertically inside a box of fixed `height`. Multi-line
+// selection is drawn per row. Emits `change` (`.as_str = buf`) on any edit.
+uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
+                      float height, const char *placeholder, vv_Msg change);
+
+// ---- overlay chrome: menus, popovers, tooltips (§ in-app overlay) ----------
+// The painter is strict tree order, so overlays must be built LAST in the view
+// (as the final children of your root) to sit on top of everything. See
+// examples/showcase.c for the pattern.
+
+// A top menu strip. Put vv_menu_title()s between begin/end.
+void     vv_menubar_begin(vv_Ctx *ctx);
+void     vv_menubar_end(vv_Ctx *ctx);
+// A clickable title in the bar. Self-managing: clicking opens/closes its menu,
+// and once any menu is open, hovering another title switches to it. Returns the
+// node handle; read its actual_rect to position the dropdown.
+uint32_t vv_menu_title(vv_Ctx *ctx, const char *key, const char *label);
+// True while `title_id`'s menu is open — build its dropdown in the overlay layer.
+bool     vv_menu_is_open(vv_Ctx *ctx, uint32_t title_id);
+
+// The dropdown panel, built in the overlay layer at screen point `at`. Includes
+// a full-window scrim so clicking away (or Escape) dismisses. Items go between.
+void     vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at);
+bool     vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
+                      const char *shortcut); // true when chosen (closes the menu)
+void     vv_menu_separator(vv_Ctx *ctx);
+void     vv_menu_end(vv_Ctx *ctx);
+
+// A free-floating popover panel anchored at `at`, `width` wide, built in the
+// overlay layer. App owns the open flag; a scrim emits `close` on outside-click
+// or Escape. Put content between begin/end.
+void     vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
+                          vv_Msg close);
+void     vv_popover_end(vv_Ctx *ctx);
+
+// Hover tooltip for `target_id`: after a short hover it fades in a small label
+// below the node. Self-contained (hover timer in node state); call it in the
+// overlay layer so it paints on top. Keeps frames alive while timing.
+void     vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text);
+
 // Labelled helpers.
 void  vv_label(vv_Ctx *ctx, const char *text);
 void  vv_label_muted(vv_Ctx *ctx, const char *text);

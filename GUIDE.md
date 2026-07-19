@@ -527,6 +527,63 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 
 ---
 
+## Desktop features: windows, menus, dialogs, multi-line text
+
+Four things a real desktop app needs, all demonstrated in `examples/showcase.c`
+and used together in `examples/theme_editor.c`.
+
+**Multi-line editing.** `vv_text_area(c, key, buf, cap, height, placeholder, msg)`
+is `vv_text_field`'s big sibling: Enter inserts a newline, Up/Down move between
+lines (keeping a goal column), Home/End act per line, selection spans rows, and
+content scrolls. Pass `height <= 0` to grow and fill the parent pane.
+
+**Menus, popovers, tooltips.** These are in-app overlays (portable, spring-
+animated) — not OS menu bars, which SDL3 doesn't expose cross-platform. Because
+the painter is strict tree order, **build overlays last in your view** (as the
+final children of the root) so they sit on top:
+
+```c
+// in the toolbar/menubar area:
+vv_menubar_begin(c);
+uint32_t file = vv_menu_title(c, "file", "File");
+vv_menubar_end(c);
+// ... rest of the UI ...
+// overlay layer, at the very end of view():
+if (vv_menu_is_open(c, file)) {
+    vv_Rect r = vv_node(c, file)->actual_rect;
+    vv_menu_begin(c, "filemenu", vv_v2(r.x, r.y + r.h));
+    if (vv_menu_item(c, "open", "Open...", "Ctrl+O")) vv_emit(c, MSG_OPEN, VV_NO_PAYLOAD);
+    vv_menu_end(c);
+}
+```
+
+Menus self-manage which one is open and dismiss on outside-click/Escape (a full-
+window scrim). `vv_popover_begin(c, key, at, width, close_msg)` is the same idea
+for app-owned open state (the scrim emits `close_msg`). `vv_tooltip(c, id, text)`
+shows a hover-delayed label below a node.
+
+**Native file dialogs.** The real OS picker, via SDL3, is asynchronous — the
+callback fires later during the pump:
+
+```c
+case MSG_OPEN: vv_app_open_file(app, "Text", "txt;md", on_open, &state); break;
+// void on_open(void *ud, const char *path) — path is NULL if cancelled.
+```
+
+**Multiple windows.** The app owns windows; each has its own `vv_Ctx` (design
+open-question 2). Open a second window sharing the GL context with
+`vv_app_open_child(parent, title, w, h)`, then drive every window from one pump:
+
+```c
+while (vv_app_pump_all() > 0) {         // routes events to each window by ID
+    if (vv_app_should_close(main)) break;
+    // for each window: vv_run_frame(&its_ctx, dt, vv_app_input(its_app), ...)
+    //                  then frame_begin/vv_render/frame_end on that window
+}
+```
+
+---
+
 ## Where to look next
 
 | You want… | Read |
@@ -543,6 +600,8 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 | A pure scorer driving an animated fuzzy finder | `examples/finder.c` |
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
+| Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
+| A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 

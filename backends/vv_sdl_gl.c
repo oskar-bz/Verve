@@ -32,6 +32,7 @@ typedef struct {
 struct vv_App {
     SDL_Window   *win;
     SDL_GLContext gl;
+    SDL_WindowID  win_id;   // for routing events in the multi-window pump
     vv_Backend    backend;
 
     GLuint rect_prog, text_prog;
@@ -40,6 +41,7 @@ struct vv_App {
 
     Font   fonts[MAX_FONTS];
     int    font_count;
+    bool   shares_gl;       // child window: programs/atlas belong to the parent
 
     vv_Rect scissors[MAX_SCISSORS];
     int     scissor_top;
@@ -47,10 +49,33 @@ struct vv_App {
     int   fb_w, fb_h;
     float dpi;
 
+    // Multi-window pump state (§ open-question 2). Each window owns its input.
+    vv_Input input;
+    bool     should_close;
+
     // Dynamic vertex scratch (grows).
     float   *verts;
     size_t   vcap, vcount; // in floats
 };
+
+// Registry of open windows, so one pump call can route SDL events to the right
+// window by ID. Small fixed cap — a UI with more live windows is unusual.
+#define MAX_WINDOWS 16
+static vv_App *g_wins[MAX_WINDOWS];
+static int     g_nwin;
+
+static void reg_window(vv_App *a) {
+    if (g_nwin < MAX_WINDOWS) g_wins[g_nwin++] = a;
+}
+static void unreg_window(vv_App *a) {
+    for (int i = 0; i < g_nwin; i++)
+        if (g_wins[i] == a) { g_wins[i] = g_wins[--g_nwin]; return; }
+}
+static vv_App *win_by_id(SDL_WindowID id) {
+    for (int i = 0; i < g_nwin; i++)
+        if (g_wins[i]->win_id == id) return g_wins[i];
+    return NULL;
+}
 
 // ---- gl helpers -----------------------------------------------------------
 
@@ -383,6 +408,7 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     vv_App *a = calloc(1, sizeof(vv_App));
     a->win = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!a->win) { fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); free(a); return NULL; }
+    a->win_id = SDL_GetWindowID(a->win);
     a->gl = SDL_GL_CreateContext(a->win);
     SDL_GL_MakeCurrent(a->win, a->gl);
     SDL_GL_SetSwapInterval(1);
@@ -409,17 +435,68 @@ vv_App *vv_app_create(const char *title, int w, int h) {
         .custom = backend_custom,
     };
     a->dpi = 1.0f;
+    reg_window(a);
+    return a;
+}
+
+// A second window sharing the parent's GL context: programs, uniform locations,
+// the glyph atlas and loaded fonts are shared objects (valid in the new context
+// too), so the child only needs its own VAO/VBO and per-window scratch.
+vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
+    if (!parent) return NULL;
+    SDL_GL_MakeCurrent(parent->win, parent->gl);
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+
+    vv_App *a = calloc(1, sizeof(vv_App));
+    a->win = SDL_CreateWindow(title, w, h, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    if (!a->win) { fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); free(a); return NULL; }
+    a->win_id = SDL_GetWindowID(a->win);
+    a->gl = SDL_GL_CreateContext(a->win);
+    SDL_GL_MakeCurrent(a->win, a->gl);
+    SDL_GL_SetSwapInterval(1);
+    SDL_StartTextInput(a->win);
+
+    // Inherit the shared GL objects (valid across the shared context).
+    a->rect_prog = parent->rect_prog; a->text_prog = parent->text_prog;
+    a->rect_u_vp = parent->rect_u_vp; a->text_u_vp = parent->text_u_vp;
+    a->text_u_tex = parent->text_u_tex;
+    memcpy(a->fonts, parent->fonts, sizeof a->fonts);
+    a->font_count = parent->font_count;
+    a->shares_gl = true;
+
+    // VAOs are not shared between contexts; give the child its own.
+    glGenVertexArrays(1, &a->vao);
+    glGenBuffers(1, &a->vbo);
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    a->backend = (vv_Backend){
+        .ctx = a,
+        .draw_rects = draw_rects, .draw_text = draw_text,
+        .push_scissor = push_scissor, .pop_scissor = pop_scissor,
+        .clipboard_get = clip_get, .clipboard_set = clip_set,
+        .measure_text = vv_app_measure,
+        .custom = backend_custom,
+    };
+    a->dpi = 1.0f;
+    reg_window(a);
     return a;
 }
 
 void vv_app_destroy(vv_App *a) {
     if (!a) return;
+    unreg_window(a);
     free(a->verts);
     SDL_GL_DestroyContext(a->gl);
     SDL_DestroyWindow(a->win);
-    SDL_Quit();
+    // Only the last window tears SDL down (a child shares the subsystem).
+    if (g_nwin == 0) SDL_Quit();
     free(a);
 }
+
+vv_Input *vv_app_input(vv_App *a) { return &a->input; }
+bool vv_app_should_close(vv_App *a) { return a->should_close; }
 
 vv_Backend *vv_app_backend(vv_App *a) { return &a->backend; }
 
@@ -570,6 +647,106 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
         }
     }
     return true;
+}
+
+// ---- multi-window pump ----------------------------------------------------
+// Reset the per-frame deltas on a window's input, keeping sticky state (mouse
+// position, button-held). Modifiers are global to the OS, so read once.
+static void input_begin_frame(vv_Input *in) {
+    in->wheel = 0;
+    in->text_len = 0; in->text[0] = 0;
+    in->key_count = 0;
+    SDL_Keymod mod = SDL_GetModState();
+    in->shift = (mod & SDL_KMOD_SHIFT) != 0;
+    in->ctrl  = (mod & SDL_KMOD_CTRL) != 0;
+    in->alt   = (mod & SDL_KMOD_ALT) != 0;
+}
+
+int vv_app_pump_all(void) {
+    for (int i = 0; i < g_nwin; i++) input_begin_frame(&g_wins[i]->input);
+
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        // Route by the window ID carried on each event's sub-struct.
+        SDL_WindowID id = 0;
+        switch (e.type) {
+            case SDL_EVENT_QUIT:
+                for (int i = 0; i < g_nwin; i++) g_wins[i]->should_close = true;
+                continue;
+            case SDL_EVENT_MOUSE_MOTION:      id = e.motion.windowID; break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:   id = e.button.windowID; break;
+            case SDL_EVENT_MOUSE_WHEEL:       id = e.wheel.windowID;  break;
+            case SDL_EVENT_TEXT_INPUT:        id = e.text.windowID;   break;
+            case SDL_EVENT_KEY_DOWN:          id = e.key.windowID;    break;
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED: id = e.window.windowID; break;
+            default: continue;
+        }
+        vv_App *a = win_by_id(id);
+        if (!a) continue;
+        vv_Input *in = &a->input;
+        switch (e.type) {
+            case SDL_EVENT_MOUSE_MOTION:
+                in->mouse = vv_v2(e.motion.x, e.motion.y); break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = true; break;
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false; break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                in->wheel += e.wheel.y; break;
+            case SDL_EVENT_TEXT_INPUT:
+                for (const char *p = e.text.text; *p && in->text_len < VV_INPUT_TEXT_CAP - 1; p++)
+                    in->text[in->text_len++] = *p;
+                in->text[in->text_len] = 0;
+                break;
+            case SDL_EVENT_KEY_DOWN: {
+                vv_Key k = map_key(e.key.key);
+                if (k != VV_KEY_NONE && in->key_count < VV_INPUT_KEY_CAP)
+                    in->keys[in->key_count++] = (vv_KeyEvent){
+                        (uint16_t)k, (e.key.mod & SDL_KMOD_SHIFT) != 0,
+                        (e.key.mod & SDL_KMOD_CTRL) != 0 };
+                break;
+            }
+            case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+                a->should_close = true; break;
+        }
+    }
+    int open = 0;
+    for (int i = 0; i < g_nwin; i++) if (!g_wins[i]->should_close) open++;
+    return open;
+}
+
+// ---- native file dialogs --------------------------------------------------
+// SDL invokes the dialog callback later, on the event thread (during a pump).
+// We trampoline through a heap record to expose a simple single-path callback.
+typedef struct { vv_FileCb cb; void *ud; } DialogTramp;
+
+static void dialog_trampoline(void *ud, const char *const *files, int filter) {
+    (void)filter;
+    DialogTramp *t = ud;
+    const char *path = (files && files[0]) ? files[0] : NULL; // NULL = cancelled
+    if (t->cb) t->cb(t->ud, path);
+    free(t);
+}
+
+void vv_app_open_file(vv_App *a, const char *filter_name, const char *filter_pat,
+                      vv_FileCb cb, void *ud) {
+    DialogTramp *t = malloc(sizeof *t);
+    t->cb = cb; t->ud = ud;
+    SDL_DialogFileFilter filt = { filter_name, filter_pat };
+    SDL_ShowOpenFileDialog(dialog_trampoline, t, a->win,
+                           filter_name ? &filt : NULL, filter_name ? 1 : 0,
+                           NULL, false);
+}
+
+void vv_app_save_file(vv_App *a, const char *filter_name, const char *filter_pat,
+                      const char *default_name, vv_FileCb cb, void *ud) {
+    DialogTramp *t = malloc(sizeof *t);
+    t->cb = cb; t->ud = ud;
+    SDL_DialogFileFilter filt = { filter_name, filter_pat };
+    SDL_ShowSaveFileDialog(dialog_trampoline, t, a->win,
+                           filter_name ? &filt : NULL, filter_name ? 1 : 0,
+                           default_name);
 }
 
 // Custom-draw dispatch (§14.3): scissor+viewport to the node's rect (in
