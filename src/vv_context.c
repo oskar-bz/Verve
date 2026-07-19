@@ -50,6 +50,18 @@ void vv_set_measure_fn(vv_Ctx *ctx,
                        void *ud) {
     ctx->measure_text = fn; ctx->measure_ud = ud;
 }
+
+void vv_set_clipboard_fns(vv_Ctx *ctx, const char *(*get)(void *ud),
+                          void (*set)(void *ud, const char *s), void *ud) {
+    ctx->clipboard_get = get; ctx->clipboard_set = set; ctx->clipboard_ud = ud;
+}
+const char *vv_clipboard_get(vv_Ctx *ctx) {
+    return ctx->clipboard_get ? ctx->clipboard_get(ctx->clipboard_ud) : NULL;
+}
+void vv_clipboard_set(vv_Ctx *ctx, const char *s) {
+    if (ctx->clipboard_set && s) ctx->clipboard_set(ctx->clipboard_ud, s);
+}
+vv_CursorShape vv_cursor(const vv_Ctx *ctx) { return ctx->cursor; }
 void *vv_state_raw(vv_Ctx *ctx, uint32_t index, size_t size) {
     return vv_pool_state(&ctx->pool, index, (uint32_t)size);
 }
@@ -328,7 +340,8 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
     // vv_invalidate() to opt back into per-frame builds.
     vv_ID   prev_hover = ctx->hovered_id;
     vv_ID   prev_focus = ctx->focused_id;
-    bool    down_edge  = ctx->input.mouse_down != ctx->mouse_prev_down;
+    bool    down_edge  = ctx->input.mouse_down != ctx->mouse_prev_down ||
+                         ctx->input.right_down != ctx->mouse_right_prev;
     bool    moved      = ctx->input.mouse.x != ctx->mouse_prev.x ||
                          ctx->input.mouse.y != ctx->mouse_prev.y;
 

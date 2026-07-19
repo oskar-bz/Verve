@@ -53,6 +53,9 @@ struct vv_App {
     vv_Input input;
     bool     should_close;
 
+    char       *clip_cache;   // last clipboard text (freed on next get)
+    SDL_Cursor *cursors[8];   // lazily created system cursors, by vv_CursorShape
+
     // Dynamic vertex scratch (grows).
     float   *verts;
     size_t   vcap, vcount; // in floats
@@ -487,6 +490,8 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
 void vv_app_destroy(vv_App *a) {
     if (!a) return;
     unreg_window(a);
+    if (a->clip_cache) SDL_free(a->clip_cache);
+    for (int i = 0; i < 8; i++) if (a->cursors[i]) SDL_DestroyCursor(a->cursors[i]);
     free(a->verts);
     SDL_GL_DestroyContext(a->gl);
     SDL_DestroyWindow(a->win);
@@ -502,6 +507,36 @@ void vv_app_wait_event(vv_App *a, int timeout_ms) {
     (void)a;
     // NULL event => wait but leave it queued for the next pump to process.
     SDL_WaitEventTimeout(NULL, timeout_ms);
+}
+
+// ---- clipboard + cursor ---------------------------------------------------
+static const char *clip_get_cache(void *ud) {
+    vv_App *a = ud;
+    if (a->clip_cache) SDL_free(a->clip_cache);
+    a->clip_cache = SDL_GetClipboardText(); // SDL-owned; freed on the next get
+    return a->clip_cache;
+}
+static void clip_set_direct(void *ud, const char *s) { (void)ud; SDL_SetClipboardText(s); }
+
+void vv_app_bind_clipboard(vv_App *a, vv_Ctx *ctx) {
+    vv_set_clipboard_fns(ctx, clip_get_cache, clip_set_direct, a);
+}
+
+void vv_app_set_cursor(vv_App *a, vv_CursorShape s) {
+    int i = (int)s;
+    if (i < 0 || i >= 8) { i = 0; s = VV_CURSOR_DEFAULT; }
+    if (!a->cursors[i]) {
+        SDL_SystemCursor sys;
+        switch (s) {
+            case VV_CURSOR_POINTER:   sys = SDL_SYSTEM_CURSOR_POINTER;   break;
+            case VV_CURSOR_TEXT:      sys = SDL_SYSTEM_CURSOR_TEXT;      break;
+            case VV_CURSOR_RESIZE_H:  sys = SDL_SYSTEM_CURSOR_EW_RESIZE; break;
+            case VV_CURSOR_RESIZE_V:  sys = SDL_SYSTEM_CURSOR_NS_RESIZE; break;
+            default:                  sys = SDL_SYSTEM_CURSOR_DEFAULT;   break;
+        }
+        a->cursors[i] = SDL_CreateSystemCursor(sys);
+    }
+    if (a->cursors[i]) SDL_SetCursor(a->cursors[i]);
 }
 
 vv_Backend *vv_app_backend(vv_App *a) { return &a->backend; }
@@ -630,9 +665,11 @@ bool vv_app_pump(vv_App *a, vv_Input *in) {
             case SDL_EVENT_MOUSE_MOTION:
                 in->mouse = vv_v2(e.motion.x, e.motion.y); break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = true; break;
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = true;
+                else if (e.button.button == SDL_BUTTON_RIGHT) in->right_down = true; break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false; break;
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false;
+                else if (e.button.button == SDL_BUTTON_RIGHT) in->right_down = false; break;
             case SDL_EVENT_MOUSE_WHEEL:
                 in->wheel += e.wheel.y; break;
             case SDL_EVENT_TEXT_INPUT: {
@@ -695,9 +732,11 @@ int vv_app_pump_all(void) {
             case SDL_EVENT_MOUSE_MOTION:
                 in->mouse = vv_v2(e.motion.x, e.motion.y); break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = true; break;
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = true;
+                else if (e.button.button == SDL_BUTTON_RIGHT) in->right_down = true; break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
-                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false; break;
+                if (e.button.button == SDL_BUTTON_LEFT) in->mouse_down = false;
+                else if (e.button.button == SDL_BUTTON_RIGHT) in->right_down = false; break;
             case SDL_EVENT_MOUSE_WHEEL:
                 in->wheel += e.wheel.y; break;
             case SDL_EVENT_TEXT_INPUT:

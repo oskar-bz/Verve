@@ -9,13 +9,7 @@
 #include "vv_command.h"
 #include "vv_types.h"
 
-typedef enum {
-    VV_CURSOR_DEFAULT,
-    VV_CURSOR_POINTER,
-    VV_CURSOR_TEXT,
-    VV_CURSOR_RESIZE_H,
-    VV_CURSOR_RESIZE_V,
-} vv_CursorShape;
+// vv_CursorShape now lives in vv_types.h (shared with the core).
 
 typedef enum { VV_PIXFMT_RGBA8, VV_PIXFMT_A8 } vv_PixFmt;
 

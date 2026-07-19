@@ -84,7 +84,8 @@ uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
       vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                    VV_LAYOUT(.w = vv_fit(), .h = vv_fixed(38),
                              .padding = vv_hv(16, 9), .main = VV_ALIGN_CENTER,
-                             .cross = VV_ALIGN_CENTER, .focusable = true),
+                             .cross = VV_ALIGN_CENTER, .focusable = true,
+                             .cursor = VV_CURSOR_POINTER),
                    VV_STYLE(.bg = t->accent, .radius = vv_r(t->radius),
                             .hover = &hover, .active = &active));
 
@@ -440,10 +441,35 @@ static void insert_text(char *buf, int *len, int cap, TextFieldState *s,
   s->anchor = s->cursor;
 }
 
+// Copy the current selection to the clipboard (frame-arena scratch; the backend
+// copies it). No-op if nothing is selected or no clipboard is bound.
+static void clip_copy_selection(vv_Ctx *ctx, const char *buf, TextFieldState *s) {
+  if (!has_sel(s)) return;
+  int lo = sel_lo(s), hi = sel_hi(s), n = hi - lo;
+  char *tmp = vv_arena_alloc(&ctx->frame, (size_t)n + 1);
+  memcpy(tmp, buf + lo, (size_t)n);
+  tmp[n] = 0;
+  vv_clipboard_set(ctx, tmp);
+}
+
+// Paste clipboard text at the caret. `multiline` keeps newlines; otherwise they
+// become spaces (a single-line field must stay one line). Returns true if it
+// changed the buffer.
+static bool clip_paste(vv_Ctx *ctx, char *buf, int *len, int cap, TextFieldState *s,
+                       bool multiline) {
+  const char *cb = vv_clipboard_get(ctx);
+  if (!cb || !cb[0]) return false;
+  int n = (int)strlen(cb);
+  char *tmp = vv_arena_alloc(&ctx->frame, (size_t)n + 1);
+  for (int i = 0; i < n; i++) tmp[i] = (!multiline && (cb[i] == '\n' || cb[i] == '\r')) ? ' ' : cb[i];
+  tmp[n] = 0;
+  insert_text(buf, len, cap, s, tmp, n);
+  return true;
+}
+
 // Returns true if the buffer changed.
 static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
                        TextFieldState *s, vv_KeyEvent ev) {
-  (void)ctx;
   bool changed = false;
   int prev = s->cursor;
   switch (ev.key) {
@@ -495,14 +521,17 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
     }
     break;
   case VV_KEY_C:
-    // Copy: clipboard is owned by the backend, not the core; a future
-    // vv_clipboard_set(ctx, ...) will route here. No-op for now.
+    if (ev.ctrl) clip_copy_selection(ctx, buf, s);
     break;
   case VV_KEY_X:
     if (ev.ctrl && has_sel(s)) {
+      clip_copy_selection(ctx, buf, s);
       delete_selection(buf, len, s);
       changed = true;
     }
+    break;
+  case VV_KEY_V:
+    if (ev.ctrl) changed |= clip_paste(ctx, buf, len, cap, s, false);
     break;
   default:
     break;
@@ -532,6 +561,7 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
                                              .padding = vv_hv(10, 0),
                                              .cross = VV_ALIGN_CENTER,
                                              .focusable = true,
+                                             .cursor = VV_CURSOR_TEXT,
                                              .clip = true},
                              (vv_Style){.bg = t->surface,
                                         .radius = vv_r(t->radius),
@@ -720,6 +750,15 @@ static bool ml_handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   case VV_KEY_A:
     if (ev.ctrl) { ts->anchor = 0; ts->cursor = *len; }
     break;
+  case VV_KEY_C:
+    if (ev.ctrl) clip_copy_selection(ctx, buf, ts);
+    break;
+  case VV_KEY_X:
+    if (ev.ctrl && has_sel(ts)) { clip_copy_selection(ctx, buf, ts); delete_selection(buf, len, ts); changed = true; }
+    break;
+  case VV_KEY_V:
+    if (ev.ctrl) { changed |= clip_paste(ctx, buf, len, cap, ts, true); s->have_goal = false; }
+    break;
   default: break;
   }
   if (ev.shift) { /* extend: keep anchor */ }
@@ -747,6 +786,7 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
                                              .h = vh,
                                              .padding = vv_all(pad),
                                              .focusable = true,
+                                             .cursor = VV_CURSOR_TEXT,
                                              .clip = true,
                                              .scroll_y = true},
                              (vv_Style){.bg = t->surface,
@@ -847,8 +887,8 @@ uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir, bool trailing,
   vv_Style hover = {.bg = t->accent};
   vv_Style active = {.bg = t->accent_hi};
   vv_LayoutDecl d = horiz
-      ? (vv_LayoutDecl){.w = vv_fixed(6), .h = vv_grow(1), .focusable = true}
-      : (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(6), .focusable = true};
+      ? (vv_LayoutDecl){.w = vv_fixed(6), .h = vv_grow(1), .focusable = true, .cursor = VV_CURSOR_RESIZE_H}
+      : (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(6), .focusable = true, .cursor = VV_CURSOR_RESIZE_V};
   uint32_t id = vv_box_keyed(ctx, key, strlen(key), d,
                              (vv_Style){.bg = t->border, .hover = &hover, .active = &active});
   float *grab = vv_state(ctx, id, float);
@@ -871,7 +911,8 @@ uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir, bool trailing,
 // tree order). The menu system self-manages which menu is open via one static —
 // menus are transient and mutually exclusive, so this stays simple.
 
-static vv_ID g_open_menu; // node id of the open menu title, 0 = none
+static vv_ID g_open_menu;    // node id of the open menu title, 0 = none
+static bool *g_ctxmenu_open; // active context menu's open flag (vv_menu_item clears it)
 
 void vv_menubar_begin(vv_Ctx *ctx) {
   const vv_Theme *t = vv_theme();
@@ -953,7 +994,7 @@ bool vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
                                       .font_size = t->font_size - 2, .font = t->font});
   vv_end_box(ctx);
   bool clicked = vv_clicked(ctx, id);
-  if (clicked) g_open_menu = 0;
+  if (clicked) { g_open_menu = 0; if (g_ctxmenu_open) *g_ctxmenu_open = false; }
   return clicked;
 }
 
@@ -1173,3 +1214,199 @@ uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date, vv_Msg change
   }
   return id;
 }
+
+// ---- radio / progress / stepper / tabs / combobox / tree / context menu ----
+
+uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
+                  bool selected, vv_Msg change, vv_Payload arg) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface_hi};
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.dir = VV_ROW, .h = vv_fixed(30), .cross = VV_ALIGN_CENTER,
+                      .gap = 8, .padding = vv_hv(6, 0), .focusable = true,
+                      .cursor = VV_CURSOR_POINTER},
+      (vv_Style){.radius = vv_r(6), .hover = &hover});
+  // Outer ring.
+  vv_box_keyed(ctx, "o", 1, (vv_LayoutDecl){.w = vv_fixed(18), .h = vv_fixed(18),
+                            .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER},
+      (vv_Style){.bg = t->surface, .radius = vv_r(9), .border_width = vv_all(2),
+                 .border_color = selected ? t->accent : t->border});
+  // Inner dot (grows in when selected — FLIP from 0).
+  vv_box_keyed(ctx, "d", 1, (vv_LayoutDecl){.w = vv_fixed(selected ? 8 : 0),
+                            .h = vv_fixed(selected ? 8 : 0)},
+      (vv_Style){.bg = t->accent, .radius = vv_r(4)});
+  vv_end_box(ctx);
+  vv_end_box(ctx);
+  vv_text(ctx, label, (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
+  vv_end_box(ctx);
+  if (vv_clicked(ctx, id)) vv_emit(ctx, change, arg);
+  return id;
+}
+
+void vv_progress(vv_Ctx *ctx, const char *key, float value) {
+  const vv_Theme *t = vv_theme();
+  if (value < 0) value = 0; if (value > 1) value = 1;
+  uint32_t track = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(8)},
+      (vv_Style){.bg = t->track, .radius = vv_r(4)});
+  float w = vv_node(ctx, track)->actual_rect.w;
+  vv_box_keyed(ctx, "fill", 4,
+      (vv_LayoutDecl){.has_absolute = true, .absolute = vv_rect(0, 0, w * value, 8)},
+      (vv_Style){.bg = t->accent, .radius = vv_r(4)});
+  vv_end_box(ctx);
+  vv_end_box(ctx);
+}
+
+static bool step_btn(vv_Ctx *ctx, const char *key, const char *glyph, bool enabled) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface_hi};
+  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
+      (vv_LayoutDecl){.w = vv_fixed(30), .h = vv_fixed(30), .main = VV_ALIGN_CENTER,
+                      .cross = VV_ALIGN_CENTER, .focusable = enabled,
+                      .cursor = VV_CURSOR_POINTER},
+      (vv_Style){.bg = t->surface, .radius = vv_r(6), .border_width = vv_all(1),
+                 .border_color = t->border, .hover = enabled ? &hover : NULL});
+  vv_text(ctx, glyph, (vv_Style){.fg = enabled ? t->text : t->text_muted, .font_size = t->font_size + 2});
+  vv_end_box(ctx);
+  return enabled && vv_clicked(ctx, id);
+}
+
+uint32_t vv_stepper(vv_Ctx *ctx, const char *key, double value, double step,
+                    double min, double max, const char *unit, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 8},
+      (vv_Style){.bg = {0}});
+  if (step_btn(ctx, "dec", "-", value > min)) {
+    double v = value - step; if (v < min) v = min;
+    vv_emit(ctx, change, vv_pf(v));
+  }
+  vv_box_keyed(ctx, "val", 3, (vv_LayoutDecl){.w = vv_fixed(72), .h = vv_fixed(30),
+                              .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER},
+      (vv_Style){.bg = t->surface, .radius = vv_r(6), .border_width = vv_all(1),
+                 .border_color = t->border});
+  vv_text(ctx, unit ? vv_fmt(ctx, "%g %s", value, unit) : vv_fmt(ctx, "%g", value),
+          (vv_Style){.fg = t->text, .font_size = t->font_size});
+  vv_end_box(ctx);
+  if (step_btn(ctx, "inc", "+", value < max)) {
+    double v = value + step; if (v > max) v = max;
+    vv_emit(ctx, change, vv_pf(v));
+  }
+  vv_end_box(ctx);
+  return id;
+}
+
+uint32_t vv_tabs(vv_Ctx *ctx, const char *key, const char *const *labels,
+                 int count, int current, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  // The bar grows to fill; tabs share it equally. (The tab width can't depend on
+  // the bar width AND the bar width on the tabs — grow breaks that cycle.)
+  uint32_t bar = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(36), .padding = vv_all(3)},
+      (vv_Style){.bg = t->surface, .radius = vv_r(8)});
+  // Sliding indicator (behind labels): FLIP-slides to the active tab's slot.
+  float bw = vv_node(ctx, bar)->actual_rect.w;
+  float tabw = count > 0 ? (bw - 6) / (float)count : 0;
+  if (current < 0) current = 0;
+  vv_box_keyed(ctx, "ind", 3,
+      (vv_LayoutDecl){.has_absolute = true,
+                      .absolute = vv_rect(3 + tabw * (float)current, 3, tabw, 30)},
+      (vv_Style){.bg = t->accent, .radius = vv_r(6)});
+  vv_end_box(ctx);
+  for (int i = 0; i < count; i++) {
+    bool act = i == current;
+    uint32_t tid = vv_box_keyed(ctx, labels[i], strlen(labels[i]),
+        (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(30), .main = VV_ALIGN_CENTER,
+                        .cross = VV_ALIGN_CENTER, .focusable = true, .cursor = VV_CURSOR_POINTER},
+        (vv_Style){.bg = {0}});
+    vv_text(ctx, labels[i], (vv_Style){.fg = act ? t->on_accent : t->text_muted,
+                                       .font_size = t->font_size});
+    vv_end_box(ctx);
+    if (vv_clicked(ctx, tid)) vv_emit(ctx, change, vv_pi(i));
+  }
+  vv_end_box(ctx);
+  return bar;
+}
+
+typedef struct { bool open; } ComboState;
+
+uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
+                     int count, int current, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface_hi};
+  vv_Style focus = {.border_color = t->accent};
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                      .cross = VV_ALIGN_CENTER, .main = VV_ALIGN_SPACE_BETWEEN,
+                      .padding = vv_hv(12, 0), .focusable = true, .cursor = VV_CURSOR_POINTER},
+      (vv_Style){.bg = t->surface, .radius = vv_r(t->radius), .border_width = vv_all(1),
+                 .border_color = t->border, .hover = &hover, .focus = &focus});
+  ComboState *s = vv_state(ctx, id, ComboState);
+  const char *cur = (current >= 0 && current < count) ? options[current] : "";
+  vv_text(ctx, cur, (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
+  vv_text(ctx, "v", (vv_Style){.fg = t->text_muted, .font_size = t->font_size - 2});
+  vv_end_box(ctx);
+  if (vv_clicked(ctx, id)) s->open = !s->open;
+
+  if (s->open) {
+    vv_Rect r = vv_node(ctx, id)->actual_rect;
+    uint32_t scrim = popover_scrim(ctx);
+    if (vv_pressed(ctx, scrim) || escape_pressed(ctx)) s->open = false;
+    vv_end_box(ctx);
+    vv_box_keyed(ctx, vv_fmt(ctx, "%s__list", key ? key : "c"), 0,
+        (vv_LayoutDecl){.dir = VV_COLUMN, .w = vv_fixed(r.w), .padding = vv_all(4), .gap = 1,
+                        .has_absolute = true, .z = VV_Z_POPOVER,
+                        .absolute = vv_rect(r.x, r.y + r.h + 4, r.w, 0)},
+        (vv_Style){.bg = t->surface_hi, .radius = vv_r(8), .border_width = vv_all(1),
+                   .border_color = t->border,
+                   .shadow = {.color = vv_rgba(0, 0, 0, 0.35f), .offset = vv_v2(0, 6), .blur = 18}});
+    for (int i = 0; i < count; i++) {
+      vv_Style ih = {.bg = t->accent};
+      uint32_t oid = vv_box_keyed(ctx, options[i], strlen(options[i]),
+          (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(28), .cross = VV_ALIGN_CENTER,
+                          .padding = vv_hv(10, 0), .focusable = true, .cursor = VV_CURSOR_POINTER},
+          (vv_Style){.bg = i == current ? t->accent_lo : (vv_Color){0}, .radius = vv_r(5), .hover = &ih});
+      bool hot = vv_hovered(ctx, oid);
+      vv_text(ctx, options[i], (vv_Style){.fg = (hot || i == current) ? t->on_accent : t->text,
+                                          .font_size = t->font_size});
+      vv_end_box(ctx);
+      if (vv_clicked(ctx, oid)) { vv_emit(ctx, change, vv_pi(i)); s->open = false; }
+    }
+    vv_end_box(ctx);
+  }
+  return id;
+}
+
+bool vv_tree_item(vv_Ctx *ctx, const char *key, const char *label, int depth,
+                  bool leaf, bool expanded, bool selected) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface_hi};
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+      (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(26), .cross = VV_ALIGN_CENTER,
+                      .padding = (vv_Edges){8.0f + (float)depth * 16.0f, 0, 8, 0}, .gap = 6,
+                      .focusable = true, .cursor = VV_CURSOR_POINTER},
+      (vv_Style){.bg = selected ? t->accent_lo : (vv_Color){0}, .radius = vv_r(5), .hover = selected ? NULL : &hover});
+  // Disclosure caret (or a spacer for leaves) keeps labels aligned.
+  vv_box_keyed(ctx, "c", 1, (vv_LayoutDecl){.w = vv_fixed(12)}, (vv_Style){.bg = {0}});
+  if (!leaf)
+    vv_text(ctx, expanded ? "v" : ">", (vv_Style){.fg = t->text_muted, .font_size = t->font_size - 3});
+  vv_end_box(ctx);
+  vv_text(ctx, label, (vv_Style){.fg = selected ? t->on_accent : t->text, .font_size = t->font_size});
+  vv_end_box(ctx);
+  return vv_clicked(ctx, id);
+}
+
+void vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, bool *open) {
+  const vv_Theme *t = vv_theme();
+  g_ctxmenu_open = open;
+  uint32_t scrim = popover_scrim(ctx);
+  if (vv_pressed(ctx, scrim) || escape_pressed(ctx)) *open = false;
+  vv_end_box(ctx);
+  vv_box_keyed(ctx, key, strlen(key),
+      (vv_LayoutDecl){.dir = VV_COLUMN, .w = vv_fixed(200), .padding = vv_all(5), .gap = 1,
+                      .has_absolute = true, .z = VV_Z_POPOVER, .absolute = vv_rect(at.x, at.y, 200, 0)},
+      (vv_Style){.bg = t->surface_hi, .radius = vv_r(8), .border_width = vv_all(1),
+                 .border_color = t->border,
+                 .shadow = {.color = vv_rgba(0, 0, 0, 0.35f), .offset = vv_v2(0, 6), .blur = 18, .spread = 2}});
+}
+void vv_context_menu_end(vv_Ctx *ctx) { vv_end_box(ctx); g_ctxmenu_open = NULL; }

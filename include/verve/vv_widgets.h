@@ -62,6 +62,42 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
 uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                       bool selected, vv_Msg click, vv_Payload arg);
 
+// A radio button in a group: render `selected` (== your state matches `arg`);
+// clicking emits `change` with payload `arg` (the option's value).
+uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
+                  bool selected, vv_Msg change, vv_Payload arg);
+
+// A determinate progress bar, `value` in [0,1]. Non-interactive; the fill
+// FLIP-springs to the new width.
+void     vv_progress(vv_Ctx *ctx, const char *key, float value);
+
+// A number stepper: [-] value unit [+]. Emits `change` with the new value
+// (`.as_float`), clamped to [min,max], stepped by `step`. `unit` may be NULL.
+uint32_t vv_stepper(vv_Ctx *ctx, const char *key, double value, double step,
+                    double min, double max, const char *unit, vv_Msg change);
+
+// A tab bar with a sliding indicator. `current` is the active index; clicking a
+// tab emits `change` with the clicked index (`.as_int`).
+uint32_t vv_tabs(vv_Ctx *ctx, const char *key, const char *const *labels,
+                 int count, int current, vv_Msg change);
+
+// A dropdown select: shows options[current], opens a popover list on click, and
+// emits `change` with the chosen index. Manages its own open state internally.
+uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
+                     int count, int current, vv_Msg change);
+
+// A tree row indented by `depth`, with a disclosure caret when not a `leaf`.
+// Returns true when the row is clicked — the app toggles `expanded` (folders) or
+// selects (leaves). The app owns the hierarchy and recursion.
+bool     vv_tree_item(vv_Ctx *ctx, const char *key, const char *label, int depth,
+                      bool leaf, bool expanded, bool selected);
+
+// A right-click context menu, built in the overlay layer (z-lifts). App owns the
+// open flag + anchor `at`; a scrim dismisses on outside-click/Escape. Put
+// vv_menu_item()s between begin/end; choosing one also clears `*open`.
+void     vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, bool *open);
+void     vv_context_menu_end(vv_Ctx *ctx);
+
 // Value-bound variants (§12). Instead of a message, these take a vv_Value: the
 // widget reads the current value to render and, on change, emits VV_MSG_BIND so
 // the driver writes it back through the bound pointer (curve/min/max/READONLY

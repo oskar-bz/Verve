@@ -36,6 +36,15 @@ typedef struct {
 typedef uint32_t vv_FontID;
 typedef uint32_t vv_TexID;
 
+// Mouse cursor shape a node can request (§11); the backend applies it.
+typedef enum {
+    VV_CURSOR_DEFAULT,
+    VV_CURSOR_POINTER,
+    VV_CURSOR_TEXT,
+    VV_CURSOR_RESIZE_H,
+    VV_CURSOR_RESIZE_V,
+} vv_CursorShape;
+
 // A custom-draw escape hatch (§14.3): `fn` is called by the backend with the
 // node's on-screen rect (logical coords) to do arbitrary rendering there — a
 // GPU viewport, a plot, a scene. The backend scissors to the rect and restores

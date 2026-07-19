@@ -243,6 +243,7 @@ int main(void) {
 
   vv_Ctx ctx; vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
+  vv_app_bind_clipboard(app, &ctx);   // Ctrl-C/V/X in the editor
 
   static App state;
   state.app = app; state.ctx = &ctx;
@@ -266,6 +267,7 @@ int main(void) {
     int w, h; float dpi; vv_app_size(app, &w, &h, &dpi);
     vv_set_window(&ctx, (float)w, (float)h, dpi);
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, vv_app_input(app), update, view, &state);
+    vv_app_set_cursor(app, vv_cursor(&ctx)); // text cursor over the editor
     if (cmds) {
       vv_app_frame_begin(app, vv_rgb(0.10f, 0.11f, 0.13f));
       vv_render(vv_app_backend(app), cmds, w, h, dpi);

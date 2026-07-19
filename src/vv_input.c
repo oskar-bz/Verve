@@ -142,6 +142,7 @@ void vv_input_process(vv_Ctx *ctx) {
     ctx->clicked_id = 0;
     ctx->pressed_id = 0;
     ctx->double_clicked_id = 0;
+    ctx->right_clicked_id = 0;
 
     // 1) Hover: fresh hit test against last frame's geometry. While a node is
     // captured (active) or a scrollbar thumb is being dragged, the pointer stays
@@ -217,6 +218,27 @@ void vv_input_process(vv_Ctx *ctx) {
         ctx->active_id = 0;
     }
 
+    // Right button: a click is a press+release on the same node (no capture/drag
+    // semantics; that's what context menus need).
+    bool rdown = ctx->input.right_down, rwas = ctx->mouse_right_prev;
+    if (rdown && !rwas) {
+        ctx->right_active_id = hit_target(ctx, m);
+    } else if (!rdown && rwas) {
+        if (ctx->right_active_id && hit_target(ctx, m) == ctx->right_active_id)
+            ctx->right_clicked_id = ctx->right_active_id;
+        ctx->right_active_id = 0;
+    }
+
+    // Cursor shape: walk from the hovered node up to the first that requests one.
+    ctx->cursor = VV_CURSOR_DEFAULT;
+    for (uint32_t idx = ctx->hovered_id ? vv_pool_find(&ctx->pool, ctx->hovered_id) : VV_NIL;
+         idx != VV_NIL; idx = ctx->pool.nodes[idx].parent) {
+        if (ctx->pool.nodes[idx].decl.cursor != VV_CURSOR_DEFAULT) {
+            ctx->cursor = ctx->pool.nodes[idx].decl.cursor;
+            break;
+        }
+    }
+
     // Tab traversal follows tree order (§11.3). Handled here so the next build
     // reflects the new focus; the focused node walks last frame's tree.
     for (int i = 0; i < ctx->input.key_count; i++)
@@ -237,8 +259,9 @@ void vv_input_process(vv_Ctx *ctx) {
         n->flags = f;
     }
 
-    ctx->mouse_prev_down = down;
-    ctx->mouse_prev      = m;
+    ctx->mouse_prev_down  = down;
+    ctx->mouse_right_prev = ctx->input.right_down;
+    ctx->mouse_prev       = m;
 }
 
 // ---- queries --------------------------------------------------------------
@@ -254,6 +277,7 @@ bool vv_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->
 bool vv_active(vv_Ctx *ctx, uint32_t index)  { return id_of(ctx, index) == ctx->active_id  && ctx->active_id; }
 bool vv_focused(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->focused_id && ctx->focused_id; }
 bool vv_double_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->double_clicked_id && ctx->double_clicked_id; }
+bool vv_right_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->right_clicked_id && ctx->right_clicked_id; }
 
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index) {
     return vv_active(ctx, index) ? ctx->drag_delta : vv_v2(0, 0);

@@ -29,7 +29,8 @@ typedef struct { uint16_t key; bool shift, ctrl; } vv_KeyEvent;
 
 typedef struct {
     vv_Vec2 mouse;
-    bool    mouse_down;
+    bool    mouse_down;   // left button
+    bool    right_down;   // right button (context menus)
     float   wheel;
 
     char        text[VV_INPUT_TEXT_CAP];  // UTF-8 typed this frame
@@ -64,6 +65,15 @@ typedef struct vv_Ctx {
                             vv_FontID font, float size, float wrap_width);
     void    *measure_ud;
 
+    // Backend clipboard (§10.3), NULL until bound. Editors route copy/cut/paste
+    // through these so the core stays backend-free.
+    const char *(*clipboard_get)(void *ud);
+    void        (*clipboard_set)(void *ud, const char *s);
+    void        *clipboard_ud;
+
+    // Cursor the hovered node requests (§11); the backend applies it each frame.
+    vv_CursorShape cursor;
+
     bool     idle_mode;         // §4.2 opt-in
     bool     tree_dirty;        // forces a Build tier next frame
     uint32_t unsettled_springs; // Present-tier gate
@@ -79,7 +89,10 @@ typedef struct vv_Ctx {
     vv_ID   pressed_id;    // went down this frame
     vv_ID   clicked_id;    // down+up both inside this frame
     vv_ID   double_clicked_id; // second click within the double-click window
+    vv_ID   right_active_id;   // node captured by a right-button press
+    vv_ID   right_clicked_id;  // right down+up both inside this frame
     bool    mouse_prev_down;
+    bool    mouse_right_prev;
     vv_Vec2 mouse_prev;   // last frame's pointer, to detect movement (idle gate)
     vv_Vec2 drag_start;
     vv_Vec2 drag_delta;
@@ -133,6 +146,17 @@ void vv_set_measure_fn(vv_Ctx *ctx,
                        vv_Vec2 (*fn)(void *ud, const char *s, int len,
                                      vv_FontID font, float size, float wrap_width),
                        void *ud);
+
+// Route editor copy/cut/paste through the backend's clipboard (§10.3). Bind once
+// at startup; widgets use vv_clipboard_get/set. Unbound => copy/paste are no-ops.
+void vv_set_clipboard_fns(vv_Ctx *ctx, const char *(*get)(void *ud),
+                          void (*set)(void *ud, const char *s), void *ud);
+const char *vv_clipboard_get(vv_Ctx *ctx);
+void        vv_clipboard_set(vv_Ctx *ctx, const char *s);
+
+// The cursor shape requested by the hovered node this frame (§11). The host
+// applies it to its window each frame (e.g. vv_app_set_cursor).
+vv_CursorShape vv_cursor(const vv_Ctx *ctx);
 void vv_set_idle_mode(vv_Ctx *ctx, bool on);
 void vv_set_animation_scale(vv_Ctx *ctx, float scale);
 void vv_invalidate(vv_Ctx *ctx);
@@ -224,6 +248,7 @@ bool    vv_clicked(vv_Ctx *ctx, uint32_t index);  // down+up both inside
 bool    vv_active(vv_Ctx *ctx, uint32_t index);   // held with capture
 bool    vv_focused(vv_Ctx *ctx, uint32_t index);
 bool    vv_double_clicked(vv_Ctx *ctx, uint32_t index);
+bool    vv_right_clicked(vv_Ctx *ctx, uint32_t index); // right-button click (context menus)
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 // Focus the next focusable node built this frame (autofocus a field on open).

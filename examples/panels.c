@@ -133,6 +133,7 @@ int main(void) {
 
   vv_Ctx ctx; vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
+  vv_app_bind_clipboard(app, &ctx);   // Ctrl-C/V/X in the editor
   vv_set_idle_mode(&ctx, true);
 
   static App state;
@@ -151,6 +152,7 @@ int main(void) {
     int w, h; float dpi; vv_app_size(app, &w, &h, &dpi);
     vv_set_window(&ctx, (float)w, (float)h, dpi);
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &state);
+    vv_app_set_cursor(app, vv_cursor(&ctx)); // resize cursor over the splitters
     if (cmds) {
       vv_app_frame_begin(app, vv_rgb(0.08f, 0.09f, 0.11f));
       vv_render(vv_app_backend(app), cmds, w, h, dpi);

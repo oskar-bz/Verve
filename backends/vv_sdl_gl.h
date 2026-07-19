@@ -67,4 +67,10 @@ void        vv_app_frame_end(vv_App *app);  // swap buffers
 vv_Vec2     vv_app_measure(void *ud, const char *s, int len,
                            vv_FontID font, float size, float wrap_width);
 
+// Wire the OS clipboard into a context so the editors' copy/cut/paste work.
+void        vv_app_bind_clipboard(vv_App *app, vv_Ctx *ctx);
+
+// Apply a cursor shape to the window. Call once per frame with vv_cursor(ctx).
+void        vv_app_set_cursor(vv_App *app, vv_CursorShape shape);
+
 #endif // VV_SDL_GL_H

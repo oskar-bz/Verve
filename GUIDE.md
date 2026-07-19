@@ -252,10 +252,32 @@ vv_date_field(c, "day", packed_date, MSG_DAY);            // calendar; emits pac
 vv_label(c, "Plain");  vv_label_muted(c, "Secondary");
 ```
 
+More catalogue widgets, same shape (emit a message, return a handle):
+
+```c
+vv_radio(c, "r1", "Medium", val == 1, MSG_LEVEL, vv_pi(1));   // group via arg
+vv_progress(c, "p", 0.4f);                                    // determinate bar
+vv_stepper(c, "freq", freq, 10, 0, 100, "Hz", MSG_FREQ);     // [-] value unit [+]
+vv_tabs(c, "t", (const char*[]){"A","B"}, 2, tab, MSG_TAB);  // sliding indicator
+vv_combobox(c, "sel", opts, n, cur, MSG_SEL);                // dropdown, self-open
+if (vv_tree_item(c, id, name, depth, leaf, expanded, sel)) { /* toggle/select */ }
+```
+
 Larger stateful widgets live alongside these — `vv_splitter` (resizable panels),
 `vv_menubar`/`vv_menu_*`, `vv_popover_*`, `vv_tooltip`, `vv_date_field`. They're
 covered under **Desktop features** below; the point is they're all just functions
 in the same public API, with no privileged access.
+
+### Right-click, cursor shapes, clipboard
+
+`vv_right_clicked(c, id)` reports a right-button click — pair it with
+`vv_context_menu_begin/…item…/end` (an overlay that dismisses on outside-click)
+for context menus. A node can request a pointer shape via `.cursor` in its
+layout (`VV_CURSOR_TEXT`, `VV_CURSOR_RESIZE_H`, …); the host applies it each
+frame with `vv_app_set_cursor(app, vv_cursor(&ctx))`. The built-in widgets
+already set sensible cursors (text fields, splitters, buttons). The editors do
+Ctrl-C/V/X once you bind the OS clipboard: `vv_app_bind_clipboard(app, &ctx)` at
+startup (routes `vv_clipboard_get/set` through the backend).
 
 Controlled widgets (checkbox/toggle/slider) take the *current* value to render
 and emit the *new* value in the payload — your `update` writes it back. Read the
@@ -664,6 +686,7 @@ right .w = vv_fixed(a->right_w);
 | A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
 | A complex stateful widget (calendar) that stays one message | `examples/dates.c` |
+| Radio/progress/stepper/tabs/combobox/tree + context menu | `examples/gallery.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 
