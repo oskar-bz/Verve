@@ -208,3 +208,43 @@ int vv_utf8_encode(uint32_t cp, char *out) {
     out[3] = (char)(0x80 | (cp & 0x3F));
     return 4;
 }
+
+// ---- grapheme clusters (reduced UAX #29) -----------------------------------
+
+static bool utf8_is_extend(uint32_t cp) {
+    // Combining marks + variation selectors — attach to the preceding base.
+    return (cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
+           (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF) ||
+           (cp >= 0xFE20 && cp <= 0xFE2F) || (cp >= 0xFE00 && cp <= 0xFE0F) ||
+           (cp >= 0xE0100 && cp <= 0xE01EF) || cp == 0x200D /* ZWJ */;
+}
+static bool utf8_is_ri(uint32_t cp) { return cp >= 0x1F1E6 && cp <= 0x1F1FF; }
+
+int vv_grapheme_next(const char *s, int len, int i) {
+    if (i >= len) return len;
+    int adv = 1;
+    uint32_t base = vv_utf8_decode(s + i, &adv);
+    int j = i + adv;
+    bool base_ri = utf8_is_ri(base);
+    while (j < len) {
+        int a2 = 1;
+        uint32_t cp = vv_utf8_decode(s + j, &a2);
+        if (utf8_is_extend(cp)) {
+            j += a2;
+            if (cp == 0x200D && j < len) { // ZWJ glues the following char in too
+                int a3 = 1; vv_utf8_decode(s + j, &a3); j += a3;
+            }
+        } else if (base_ri && utf8_is_ri(cp)) {
+            j += a2; base_ri = false; // a flag is exactly one RI pair
+        } else break;
+    }
+    return j > len ? len : j;
+}
+
+int vv_grapheme_prev(const char *s, int len, int i) {
+    if (i <= 0) return 0;
+    // Walk clusters forward to find the boundary just before i (O(n), fine here).
+    int prev = 0, p = 0;
+    while (p < i) { int n = vv_grapheme_next(s, len, p); if (n >= i) break; prev = n; p = n; }
+    return prev;
+}

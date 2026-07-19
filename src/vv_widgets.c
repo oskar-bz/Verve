@@ -479,11 +479,11 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   switch (ev.key) {
   case VV_KEY_LEFT:
     if (s->cursor > 0)
-      s->cursor = vv_utf8_prev(buf, s->cursor);
+      s->cursor = vv_grapheme_prev(buf, *len, s->cursor);
     break;
   case VV_KEY_RIGHT:
     if (s->cursor < *len)
-      s->cursor = vv_utf8_next(buf, *len, s->cursor);
+      s->cursor = vv_grapheme_next(buf, *len, s->cursor);
     break;
   case VV_KEY_HOME:
     s->cursor = 0;
@@ -504,7 +504,7 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
       s->cursor = s->anchor = start;
       changed = true;
     } else if (s->cursor > 0) {
-      int p = vv_utf8_prev(buf, s->cursor); // delete one whole codepoint
+      int p = vv_grapheme_prev(buf, *len, s->cursor); // delete one whole codepoint
       erase_range(buf, len, p, s->cursor);
       s->cursor = p;
       s->anchor = s->cursor;
@@ -515,7 +515,7 @@ static bool handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
     if (delete_selection(buf, len, s)) {
       changed = true;
     } else if (s->cursor < *len) {
-      erase_range(buf, len, s->cursor, vv_utf8_next(buf, *len, s->cursor));
+      erase_range(buf, len, s->cursor, vv_grapheme_next(buf, *len, s->cursor));
       changed = true;
     }
     break;
@@ -736,8 +736,8 @@ static bool ml_handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   bool vertical = (ev.key == VV_KEY_UP || ev.key == VV_KEY_DOWN);
   if (!vertical) s->have_goal = false;
   switch (ev.key) {
-  case VV_KEY_LEFT:  if (ts->cursor > 0) ts->cursor = vv_utf8_prev(buf, ts->cursor); break;
-  case VV_KEY_RIGHT: if (ts->cursor < *len) ts->cursor = vv_utf8_next(buf, *len, ts->cursor); break;
+  case VV_KEY_LEFT:  if (ts->cursor > 0) ts->cursor = vv_grapheme_prev(buf, *len, ts->cursor); break;
+  case VV_KEY_RIGHT: if (ts->cursor < *len) ts->cursor = vv_grapheme_next(buf, *len, ts->cursor); break;
   case VV_KEY_HOME:  ts->cursor = ml_line_start(buf, ts->cursor); break;
   case VV_KEY_END:   ts->cursor = ml_line_end(buf, *len, ts->cursor); break;
   case VV_KEY_UP:
@@ -758,11 +758,11 @@ static bool ml_handle_key(vv_Ctx *ctx, char *buf, int *len, int cap,
   }
   case VV_KEY_BACKSPACE:
     if (delete_selection(buf, len, ts)) changed = true;
-    else if (ts->cursor > 0) { int p = vv_utf8_prev(buf, ts->cursor); erase_range(buf, len, p, ts->cursor); ts->cursor = p; ts->anchor = p; changed = true; }
+    else if (ts->cursor > 0) { int p = vv_grapheme_prev(buf, *len, ts->cursor); erase_range(buf, len, p, ts->cursor); ts->cursor = p; ts->anchor = p; changed = true; }
     break;
   case VV_KEY_DELETE:
     if (delete_selection(buf, len, ts)) changed = true;
-    else if (ts->cursor < *len) { erase_range(buf, len, ts->cursor, vv_utf8_next(buf, *len, ts->cursor)); changed = true; }
+    else if (ts->cursor < *len) { erase_range(buf, len, ts->cursor, vv_grapheme_next(buf, *len, ts->cursor)); changed = true; }
     break;
   case VV_KEY_A:
     if (ev.ctrl) { ts->anchor = 0; ts->cursor = *len; }
