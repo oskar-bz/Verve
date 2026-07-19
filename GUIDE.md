@@ -687,6 +687,7 @@ right .w = vv_fixed(a->right_w);
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
 | A complex stateful widget (calendar) that stays one message | `examples/dates.c` |
 | Radio/progress/stepper/tabs/combobox/tree + context menu | `examples/gallery.c` |
+| Unicode text: dynamic atlas, font fallback, IME, i18n | `examples/i18n.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 
