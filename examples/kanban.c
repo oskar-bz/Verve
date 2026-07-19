@@ -159,13 +159,14 @@ static uint32_t card_view(vv_Ctx *c, Board *b, int id, bool floating) {
                                   : (vv_Shadow){0},
                .transform = floating ? vv_scale(1.04f) : vv_mat_identity()));
   {
-    // colored tag stripe
+    // colored tag stripe (a leaf — open and close it)
     vv_box_keyed(c, "tag", 3,
                  VV_LAYOUT(.w = vv_fixed(5), .h = vv_fixed(CARDH - 20)),
                  VV_STYLE(.bg = PALETTE[cd->hue], .radius = vv_r(3)));
+    vv_end_box(c);
     vv_text(c, cd->text, VV_STYLE(.fg = t->text, .font_size = 15));
   }
-  vv_end_box(c);
+  vv_end_box(c); // close the card node
   return node;
 }
 
@@ -214,12 +215,14 @@ static void view(vv_Ctx *c, void *state) {
           // cards, inserting a placeholder gap at the live drop target
           for (int i = 0; i < b->ncol[col]; i++) {
             int id = b->cols[col][i];
-            if (dragging && col == b->drop_col && card_count[col] == b->drop_order)
+            if (dragging && col == b->drop_col && card_count[col] == b->drop_order) {
               vv_box_keyed(c, "gap", 3,
                            VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(CARDH)),
                            VV_STYLE(.bg = vv_rgba(1, 1, 1, 0.05f), .radius = vv_r(8),
                                     .border_width = vv_all(2),
                                     .border_color = vv_rgba(1, 1, 1, 0.12f)));
+              vv_end_box(c);
+            }
             if (dragging && id == b->drag_id) continue; // lifted out of flow
             uint32_t cn = card_view(c, b, id, false);
             card_node[col][card_count[col]++] = cn;
@@ -227,12 +230,14 @@ static void view(vv_Ctx *c, void *state) {
             if (vv_double_clicked(c, cn)) vv_emit(c, MSG_DELETE, vv_pi(id));
           }
           // placeholder past the last card (drop_order beyond the built count)
-          if (dragging && col == b->drop_col && b->drop_order >= card_count[col])
+          if (dragging && col == b->drop_col && b->drop_order >= card_count[col]) {
             vv_box_keyed(c, "gap", 3,
                          VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(CARDH)),
                          VV_STYLE(.bg = vv_rgba(1, 1, 1, 0.05f), .radius = vv_r(8),
                                   .border_width = vv_all(2),
                                   .border_color = vv_rgba(1, 1, 1, 0.12f)));
+            vv_end_box(c);
+          }
 
           vv_button(c, ckey /*stable per col*/, "+ Add", MSG_ADD, vv_pi(col));
         }
