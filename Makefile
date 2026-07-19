@@ -54,7 +54,7 @@ demo: $(DEMO_BIN)
 # avoid clashing with the headless examples rule).
 gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD)/kanban \
      $(BUILD)/palette $(BUILD)/habit $(BUILD)/inspector $(BUILD)/transitions \
-     $(BUILD)/table $(BUILD)/finder $(BUILD)/playground
+     $(BUILD)/table $(BUILD)/finder $(BUILD)/playground $(BUILD)/bindings
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -86,6 +86,9 @@ $(BUILD)/finder: examples/finder.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/playground: examples/playground.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/bindings: examples/bindings.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 

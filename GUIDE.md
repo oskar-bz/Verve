@@ -533,6 +533,7 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 |---|---|
 | The full architecture & rationale | `verve-design.md` |
 | A minimal end-to-end app | `examples/mycounter.c` |
+| Two-way value bindings (no update case) | `examples/bindings.c` |
 | A bigger app (7GUIs tasks) | `examples/sevenguis.c` |
 | Drag & drop with FLIP-spring reorder | `examples/kanban.c` |
 | Perceptual color (OKLab, contrast, ramps) | `examples/palette.c` |
