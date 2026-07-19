@@ -1035,3 +1035,140 @@ void vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text) {
   vv_text(ctx, text, (vv_Style){.fg = t->text, .font_size = t->font_size - 1, .font = t->font});
   vv_end_box(ctx);
 }
+
+// ---- date field -----------------------------------------------------------
+// A self-contained calendar picker, and the test case for "does one update
+// handler scale". Every internal interaction — open/close, prev/next month,
+// hover — lives in the field node's vv_state and emits NOTHING to the app; only
+// picking a day emits `change` (the new packed date). So however complex the
+// widget is inside, the app sees exactly one message per instance.
+
+static const char *const MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+static int date_dow(int y, int m, int d) { // 0 = Sunday (Sakamoto's algorithm)
+  static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (m < 3) y -= 1;
+  return (y + y / 4 - y / 100 + y / 400 + t[m - 1] + d) % 7;
+}
+static int date_dim(int y, int m) {
+  static const int d[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
+  return d[m - 1];
+}
+
+typedef struct { bool open, init; int vy, vm; } DateState;
+
+// A day square in the calendar. Pad cells (before day 1 / after month end) are
+// built by the caller, keyed by grid slot.
+static bool day_cell(vv_Ctx *ctx, int day, bool selected) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface};
+  uint32_t id = vv_box_keyed(ctx, vv_fmt(ctx, "d%d", day), 0,
+                             (vv_LayoutDecl){.w = vv_fixed(32), .h = vv_fixed(28),
+                                             .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
+                                             .focusable = true},
+                             (vv_Style){.bg = selected ? t->accent : (vv_Color){0},
+                                        .radius = vv_r(6), .hover = selected ? NULL : &hover});
+  vv_text(ctx, vv_fmt(ctx, "%d", day),
+          (vv_Style){.fg = selected ? t->on_accent : t->text, .font_size = t->font_size - 1});
+  vv_end_box(ctx);
+  return vv_clicked(ctx, id);
+}
+
+static bool nav_button(vv_Ctx *ctx, const char *key, const char *glyph) {
+  const vv_Theme *t = vv_theme();
+  vv_Style hover = {.bg = t->surface};
+  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
+                             (vv_LayoutDecl){.w = vv_fixed(26), .h = vv_fixed(24),
+                                             .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
+                                             .focusable = true},
+                             (vv_Style){.radius = vv_r(6), .hover = &hover});
+  vv_text(ctx, glyph, (vv_Style){.fg = t->text, .font_size = t->font_size});
+  vv_end_box(ctx);
+  return vv_clicked(ctx, id);
+}
+
+uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  int y = date / 10000, m = (date / 100) % 100, d = date % 100;
+  if (m < 1 || m > 12) m = 1;
+  if (d < 1) d = 1;
+
+  vv_Style hover = {.bg = t->surface_hi};
+  vv_Style focus = {.border_color = t->accent};
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                                             .cross = VV_ALIGN_CENTER, .main = VV_ALIGN_SPACE_BETWEEN,
+                                             .padding = vv_hv(12, 0), .focusable = true},
+                             (vv_Style){.bg = t->surface, .radius = vv_r(t->radius),
+                                        .border_width = vv_all(1), .border_color = t->border,
+                                        .hover = &hover, .focus = &focus});
+  DateState *s = vv_state(ctx, id, DateState);
+  if (!s->init) { s->vy = y; s->vm = m; s->init = true; }
+  vv_text(ctx, vv_fmt(ctx, "%s %d, %d", MONTHS[m - 1], d, y),
+          (vv_Style){.fg = t->text, .font_size = t->font_size, .font = t->font});
+  vv_text(ctx, "v", (vv_Style){.fg = t->text_muted, .font_size = t->font_size - 2});
+  vv_end_box(ctx);
+  // Open toggles; opening resyncs the view to the selected month.
+  if (vv_clicked(ctx, id)) { s->open = !s->open; s->vy = y; s->vm = m; }
+
+  if (s->open) {
+    const float cellw = 32, pad = 10, W = 7 * cellw + pad * 2;
+    vv_Rect fr = vv_node(ctx, id)->actual_rect;
+
+    uint32_t scrim = popover_scrim(ctx);
+    if (vv_pressed(ctx, scrim) || escape_pressed(ctx)) s->open = false;
+    vv_end_box(ctx);
+
+    vv_box_keyed(ctx, vv_fmt(ctx, "%s__cal", key ? key : "d"), 0,
+                 (vv_LayoutDecl){.dir = VV_COLUMN, .w = vv_fixed(W), .padding = vv_all(pad),
+                                 .gap = 4, .has_absolute = true, .z = VV_Z_POPOVER,
+                                 .absolute = vv_rect(fr.x, fr.y + fr.h + 4, W, 0)},
+                 (vv_Style){.bg = t->surface_hi, .radius = vv_r(10),
+                            .border_width = vv_all(1), .border_color = t->border,
+                            .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                       .offset = vv_v2(0, 8), .blur = 22, .spread = 2}});
+    // Header: < Month YYYY > — mutates the view month in place, no app message.
+    VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
+                          .main = VV_ALIGN_SPACE_BETWEEN),
+           VV_STYLE(.bg = {0})) {
+      if (nav_button(ctx, "<", "<")) { if (--s->vm < 1) { s->vm = 12; s->vy--; } }
+      vv_text(ctx, vv_fmt(ctx, "%s %d", MONTHS[s->vm - 1], s->vy),
+              VV_STYLE(.fg = t->text, .font_size = t->font_size));
+      if (nav_button(ctx, ">", ">")) { if (++s->vm > 12) { s->vm = 1; s->vy++; } }
+    }
+    // Weekday header.
+    VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW), VV_STYLE(.bg = {0})) {
+      static const char *const WD[] = {"Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"};
+      for (int i = 0; i < 7; i++) {
+        VV_BOX(ctx, VV_LAYOUT(.w = vv_fixed(cellw), .main = VV_ALIGN_CENTER), VV_STYLE(.bg = {0})) {
+          vv_text(ctx, WD[i], VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
+        }
+      }
+    }
+    // Six week rows.
+    int first = date_dow(s->vy, s->vm, 1), dim = date_dim(s->vy, s->vm);
+    int day = 1 - first;
+    for (int w = 0; w < 6; w++) {
+      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1)), VV_STYLE(.bg = {0})) {
+        for (int wd = 0; wd < 7; wd++, day++) {
+          if (day < 1 || day > dim) { // pad cell, keyed by grid slot
+            vv_box_keyed(ctx, vv_fmt(ctx, "p%d", w * 7 + wd), 0,
+                         (vv_LayoutDecl){.w = vv_fixed(cellw), .h = vv_fixed(28)},
+                         (vv_Style){.bg = {0}});
+            vv_end_box(ctx);
+            continue;
+          }
+          bool sel = day == d && s->vm == m && s->vy == y;
+          if (day_cell(ctx, day, sel)) {
+            vv_emit(ctx, change, vv_pi(vv_date_pack(s->vy, s->vm, day)));
+            s->open = false;
+          }
+        }
+      }
+    }
+    vv_end_box(ctx); // calendar panel
+  }
+  return id;
+}

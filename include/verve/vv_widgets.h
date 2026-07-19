@@ -85,6 +85,18 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
 uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
                       float height, const char *placeholder, vv_Msg change);
 
+// Calendar date field. Shows `date` (packed as year*10000 + month*100 + day,
+// e.g. 20260719) and opens a month-grid popover to pick a new one. All of its
+// internal interaction — open/close, prev/next month, day hover — is kept in the
+// field's own node state and emits nothing; only choosing a day emits `change`
+// with the new packed date in `.as_int`. A controlled widget: pass the current
+// date, store the emitted one. `vv_date_pack`/`vv_date_unpack` help at the edges.
+uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date, vv_Msg change);
+static inline int32_t vv_date_pack(int y, int m, int d) { return y * 10000 + m * 100 + d; }
+static inline void    vv_date_unpack(int32_t v, int *y, int *m, int *d) {
+    if (y) *y = v / 10000; if (m) *m = (v / 100) % 100; if (d) *d = v % 100;
+}
+
 // A draggable divider for resizable multi-panel layouts. Place it between two
 // panes inside a VV_ROW (a vertical bar that resizes horizontally) or a
 // VV_COLUMN (a horizontal bar, vertically). `size` is the current size of the

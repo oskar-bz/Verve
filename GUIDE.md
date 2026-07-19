@@ -639,6 +639,7 @@ right .w = vv_fixed(a->right_w);
 | Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
 | A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
+| A complex stateful widget (calendar) that stays one message | `examples/dates.c` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |
 
