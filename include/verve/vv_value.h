@@ -44,6 +44,18 @@ static inline vv_Value vv_boolval(bool *p, const vv_ValueMeta *m) {
     return (vv_Value){ VV_VAL_BOOL, p, m };
 }
 
+// Read a bound target as a float regardless of its stored kind, so numeric
+// widgets (slider/drag) display the right value even for an int32 target (whose
+// bits must not be reinterpreted as a float).
+static inline float vv_value_as_float(vv_Value v) {
+    if (!v.ptr) return 0.0f;
+    switch (v.kind) {
+    case VV_VAL_I32:  return (float)*(int32_t *)v.ptr;
+    case VV_VAL_BOOL: return *(bool *)v.ptr ? 1.0f : 0.0f;
+    default:          return *(float *)v.ptr; // F32
+    }
+}
+
 // ---- two-way binding over the message queue (§12) --------------------------
 // A value-bound widget doesn't write its target directly (that would mutate
 // state during view). Instead it emits VV_MSG_BIND carrying this record; the

@@ -266,7 +266,7 @@ uint32_t vv_slider(vv_Ctx *ctx, const char *key, float value, float min,
 }
 
 uint32_t vv_slider_bound(vv_Ctx *ctx, const char *key, vv_Value v) {
-  float value = v.ptr ? *(float *)v.ptr : 0.0f;
+  float value = vv_value_as_float(v);
   float min = v.meta ? v.meta->min : 0.0f;
   float max = v.meta ? v.meta->max : 1.0f;
   bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);
@@ -340,7 +340,7 @@ uint32_t vv_drag_number(vv_Ctx *ctx, const char *key, float value, float speed,
 
 uint32_t vv_drag_number_bound(vv_Ctx *ctx, const char *key, vv_Value v,
                               float speed) {
-  float value = v.ptr ? *(float *)v.ptr : 0.0f;
+  float value = vv_value_as_float(v);
   float min = v.meta ? v.meta->min : 0.0f;
   float max = v.meta ? v.meta->max : 0.0f; // 0,0 => unclamped
   bool readonly = v.meta && (v.meta->flags & VV_VAL_READONLY);

@@ -469,7 +469,7 @@ void vv_apply(vv_Event ev) {
     if (!b || !b->target.ptr) return;
     switch (b->target.kind) {
     case VV_VAL_F32:  *(float *)b->target.ptr   = (float)b->val.as_float; break;
-    case VV_VAL_I32:  *(int32_t *)b->target.ptr = (int32_t)b->val.as_int;  break;
+    case VV_VAL_I32:  *(int32_t *)b->target.ptr = (int32_t)lround(b->val.as_float); break;
     case VV_VAL_BOOL: *(bool *)b->target.ptr    = b->val.as_int != 0;      break;
     case VV_VAL_COLOR:*(vv_Color *)b->target.ptr= *(vv_Color *)b->val.as_ptr; break;
     case VV_VAL_STR:  break; // strings edit their buffer in place (§10.3)
