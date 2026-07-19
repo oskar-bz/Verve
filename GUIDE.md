@@ -166,6 +166,11 @@ Alignment values: `VV_ALIGN_START`, `_CENTER`, `_END`, and `_SPACE_BETWEEN`
 `.scroll_x/.scroll_y`, `.focusable`, `.disabled`, `.absolute` + `.has_absolute`
 (escape flow for popovers/tooltips), `.z` (layer), `.aspect_ratio`.
 
+A `.scroll_x/.scroll_y` box clips its overflow, glides on a spring, and draws an
+overlay scrollbar thumb automatically when the content overflows that axis — you
+don't add a scrollbar widget. Pair it with `vv_rows` (below) to virtualize long
+lists so only the visible rows are built.
+
 `VV_BOX(...) { }` is a scoped macro — the closing brace emits `vv_end_box`. If
 you need the box handle (for queries or `vv_on`), call the function form:
 
@@ -510,6 +515,8 @@ and read-only for now. See `examples/inspector.c` for the full wiring.
 | Perceptual color (OKLab, contrast, ramps) | `examples/palette.c` |
 | Per-node color springs over a big grid | `examples/habit.c` |
 | State-driven transitions (tabs, async, toasts) | `examples/transitions.c` |
+| Logic/view split + virtualized 10k-row table | `examples/table.c` |
+| A pure scorer driving an animated fuzzy finder | `examples/finder.c` |
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Live-editing workflow | `examples/hot/` |
 | Exact signatures | headers in `include/verve/` |

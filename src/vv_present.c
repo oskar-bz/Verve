@@ -241,6 +241,37 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
     };
 }
 
+// Overlay scrollbar thumbs for a scroll container, painted on top of its
+// (clipped) content and un-clipped themselves. Length encodes the visible
+// fraction; position encodes the scroll offset. Drawn only when the axis
+// overflows. A minimal, always-visible indicator — no track, no hit region.
+static void emit_scrollbar(vv_Ctx *ctx, vv_Node *n, float inh) {
+    const float W = 6.0f, M = 2.0f, MIN = 28.0f;
+    vv_Rect v = n->actual_rect;
+    vv_Color thumb = with_alpha(vv_rgba(1, 1, 1, 0.28f), inh);
+
+    if (n->scroll_max_y > 0.5f && v.h > 0.0f) {
+        float content = v.h + n->scroll_max_y;
+        float len = vv_clampf(v.h * v.h / content, MIN, v.h);
+        float frac = vv_clampf(n->scroll_y.x / n->scroll_max_y, 0.0f, 1.0f);
+        vv_Command *c = push_cmd(ctx);
+        c->kind = VV_CMD_RECT;
+        c->as.rect = (vv_CmdRect){
+            .rect = vv_rect(v.x + v.w - W - M, v.y + frac * (v.h - len), W, len),
+            .radius = vv_r(W * 0.5f), .fill_a = thumb, .fill_b = thumb };
+    }
+    if (n->scroll_max_x > 0.5f && v.w > 0.0f) {
+        float content = v.w + n->scroll_max_x;
+        float len = vv_clampf(v.w * v.w / content, MIN, v.w);
+        float frac = vv_clampf(n->scroll_x.x / n->scroll_max_x, 0.0f, 1.0f);
+        vv_Command *c = push_cmd(ctx);
+        c->kind = VV_CMD_RECT;
+        c->as.rect = (vv_CmdRect){
+            .rect = vv_rect(v.x + frac * (v.w - len), v.y + v.h - W - M, len, W),
+            .radius = vv_r(W * 0.5f), .fill_a = thumb, .fill_b = thumb };
+    }
+}
+
 // ---- tree walk ------------------------------------------------------------
 
 static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op,
@@ -297,6 +328,7 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
     }
 
     if (clips) push_cmd(ctx)->kind = VV_CMD_SCISSOR_POP;
+    if (n->decl.scroll_x || n->decl.scroll_y) emit_scrollbar(ctx, n, inh_op);
 }
 
 // Detached exiting nodes (§3.3): drive their exit spring and paint the corpse
