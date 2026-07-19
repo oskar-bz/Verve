@@ -1,8 +1,9 @@
 # Verve
 
 An animation-native, scriptable immediate-mode UI library in C for
-graphics-heavy applications. See [verve-design.md](verve-design.md) for the full
-design and rationale.
+graphics-heavy applications. See [GUIDE.md](GUIDE.md) for the usage guide
+(building apps, custom widgets, hot-reload) and [verve-design.md](verve-design.md)
+for the full design and rationale.
 
 Immediate in its API, retained in its state, every-frame in its cadence — "React's
 architecture written in C." User code declares the *target* style for the current

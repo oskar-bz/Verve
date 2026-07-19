@@ -1,0 +1,477 @@
+# Verve — Usage Guide
+
+Verve is an animation-native, immediate-mode UI library in C. You describe the
+UI you *want* every frame; Verve keeps a retained tree behind the scenes and
+springs the on-screen result toward your description. Nothing you draw ever
+"snaps" unless you ask it to.
+
+This guide is task-oriented. For the design rationale see
+[verve-design.md](verve-design.md); for the exact signatures read the headers in
+`include/verve/`.
+
+---
+
+## 1. The mental model
+
+Three ideas carry the whole library:
+
+1. **Immediate API, retained state.** Your `view` function runs top-to-bottom
+   and *declares* boxes, text, and widgets. Verve reconciles that declaration
+   against a retained node tree using stable identity, so a widget keeps its
+   animation and internal state across frames even though you "rebuild" it every
+   time.
+
+2. **Target vs. actual.** Your style/layout is the *target*. Each node also
+   holds an *actual* value plus velocity. In the Present phase springs move
+   actual toward target. Change a color, a size, or a whole theme and it
+   animates for free.
+
+3. **Message / update / view (The Elm Architecture).** Widgets never return
+   "was clicked". They **emit a message** into a queue. A driver drains the
+   queue into your `update(state, event)`, then re-runs `view(ctx, state)` only
+   when something changed.
+
+   ```
+   view()  emits  ->  [ queue ]  ->  drained into  update()  ->  mutates state
+     ^                                                                  |
+     +---------------------- re-run when state changed -----------------+
+   ```
+
+   `view` is pure: it reads state and emits, never mutates. `update` is the only
+   place state changes and never touches the UI tree. This split is the reason
+   the code stays testable.
+
+---
+
+## 2. A complete application
+
+Every app is: define **messages**, define **state**, write **update**, write
+**view**, then spin the loop. Here is the reference counter (see
+`examples/mycounter.c`):
+
+```c
+#include "verve/verve.h"
+#include "vv_sdl_gl.h"
+#include <SDL3/SDL.h>
+
+// 1. Messages — user-defined ids. 0 is reserved (VV_MSG_NONE), so start at 1.
+enum { MSG_STEP = 1, MSG_TOGGLE_SUB, MSG_RESET };
+
+// 2. State.
+typedef struct { bool subtract; int64_t counter; } Counter;
+
+// 3. update — the ONLY place state mutates.
+static void update(void *state, vv_Event ev) {
+  Counter *s = state;
+  switch (ev.msg) {
+  case MSG_STEP:       s->counter += ev.data.as_int; break;
+  case MSG_TOGGLE_SUB: s->subtract = ev.data.as_int; break;
+  case MSG_RESET:      s->counter  = 0;              break;
+  }
+}
+
+// 4. view — pure function of state; emits messages, never mutates.
+static void view(vv_Ctx *c, void *state) {
+  Counter *s = state;
+  const vv_Theme *t = vv_theme();
+  int64_t step = s->subtract ? -1 : 1;
+
+  VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                      .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER, .gap = 12),
+         VV_STYLE(.bg = vv_rgb(0.09f, 0.09f, 0.09f))) {
+
+    vv_text(c, "Counter!", VV_STYLE(.fg = t->text, .font_size = 26));
+    vv_checkbox(c, "sub", "Enable subtraction?", s->subtract, MSG_TOGGLE_SUB);
+    vv_text(c, vv_fmt(c, "%lld", (long long)s->counter),
+            VV_STYLE(.fg = t->text, .font_size = 40));
+
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = 10), VV_STYLE(.bg = {0})) {
+      vv_button(c, "step1",  s->subtract ? "-1"  : "+1",  MSG_STEP, vv_pi(step));
+      vv_button(c, "step10", s->subtract ? "-10" : "+10", MSG_STEP, vv_pi(step*10));
+      vv_button(c, "reset",  "Reset", MSG_RESET, VV_NO_PAYLOAD);
+    }
+  }
+}
+
+int main(void) {
+  vv_App *app = vv_app_create("Verve · Counter", 900, 640);
+  vv_app_load_font(app, "/usr/share/fonts/noto/NotoSans-Regular.ttf");
+
+  vv_Ctx ctx; vv_init(&ctx);
+  vv_set_measure_fn(&ctx, vv_app_measure, app); // text metrics for layout
+  vv_set_idle_mode(&ctx, true);                 // ~0% CPU when nothing moves
+
+  Counter state = {0};
+  vv_Input in = {0};
+  uint64_t prev = SDL_GetPerformanceCounter();
+
+  while (vv_app_pump(app, &in)) {
+    uint64_t now = SDL_GetPerformanceCounter();
+    float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency(); prev = now;
+
+    int w, h; float dpi; vv_app_size(app, &w, &h, &dpi);
+    vv_set_window(&ctx, (float)w, (float)h, dpi);
+
+    // The whole loop: drain messages -> update -> conditionally rebuild view.
+    vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &state);
+
+    if (cmds) { // NULL => fully idle this frame; skip draw + swap.
+      vv_app_frame_begin(app, vv_rgb(0.09f, 0.09f, 0.09f));
+      vv_render(vv_app_backend(app), cmds, w, h, dpi);
+      vv_app_frame_end(app);
+    }
+  }
+  vv_shutdown(&ctx);
+  vv_app_destroy(app);
+}
+```
+
+`vv_run_frame` is the blessed driver. It processes last frame's messages, then
+rebuilds the view only if a message fired or this frame's input could produce
+one — otherwise it just *presents* (advances springs). With idle mode on, a
+fully-settled UI returns `NULL` so you skip the draw entirely.
+
+---
+
+## 3. Layout
+
+Layout is a flexbox-style solver. A box has a direction, per-axis sizing,
+padding, gap, and alignment. Fields are zero-init friendly — omit what you don't
+need.
+
+```c
+VV_BOX(c, VV_LAYOUT(
+    .dir     = VV_ROW,          // or VV_COLUMN
+    .w       = vv_grow(1),      // sizing (below); .h defaults to FIT
+    .padding = {12,12,12,12},   // l, t, r, b
+    .gap     = 8,
+    .main    = VV_ALIGN_CENTER, // along .dir
+    .cross   = VV_ALIGN_CENTER, // perpendicular
+  ), VV_STYLE(.bg = t->surface)) {
+    /* children */
+}
+```
+
+Sizing modes (per axis, `.w` / `.h`):
+
+| Constructor | Meaning |
+|---|---|
+| `vv_fit()`      | intrinsic content size (default when zero-init) |
+| `vv_fixed(n)`   | exactly `n` logical pixels |
+| `vv_grow(w)`    | share of leftover space, weight `w` |
+| `vv_percent(p)` | fraction `p` of the parent's resolved size |
+
+Alignment values: `VV_ALIGN_START`, `_CENTER`, `_END`, and `_SPACE_BETWEEN`
+(main axis only). Other useful `VV_LAYOUT` fields: `.wrap`, `.clip`,
+`.scroll_x/.scroll_y`, `.focusable`, `.disabled`, `.absolute` + `.has_absolute`
+(escape flow for popovers/tooltips), `.z` (layer), `.aspect_ratio`.
+
+`VV_BOX(...) { }` is a scoped macro — the closing brace emits `vv_end_box`. If
+you need the box handle (for queries or `vv_on`), call the function form:
+
+```c
+uint32_t id = vv_box(c, decl, style);
+/* ...children via vv_box_keyed / vv_text... */
+vv_end_box(c);
+```
+
+---
+
+## 4. Styling and animation
+
+`VV_STYLE(...)` is a sparse overlay: zero-init means "inherit from theme". Set
+only the channels you care about.
+
+```c
+VV_STYLE(
+  .bg           = t->surface,
+  .fg           = t->text,          // text color
+  .radius       = {8,8,8,8},        // per corner
+  .border_width = {1,1,1,1},        // per side
+  .border_color = t->border,
+  .opacity      = 1.0f,
+  .font_size    = 16,
+)
+```
+
+**Everything animates automatically.** Because the actual value springs toward
+the target, simply declaring a different `.bg` this frame produces a smooth
+transition. State variants attach hover/active/focus/disabled overlays that also
+spring:
+
+```c
+static const vv_Style hover = VV_STYLE(.bg = /*...*/, .set = VV_STYLE_BG);
+vv_box(c, decl, VV_STYLE(.bg = base, .hover = &hover));
+```
+
+(Variants need the `.set` presence mask so "transparent black" is
+distinguishable from "unset".)
+
+When a value is *continuously driven* every frame (a progress bar width, an
+audio meter), springing would make it lag reality. Opt that channel out:
+
+```c
+VV_STYLE(.transition_mask = VV_INSTANT_RECT)  // rect tracks reality, no FLIP
+```
+
+### Themes
+
+A `vv_Theme` is just a bag of colors + a default font/size. Swapping the whole
+theme animates every widget at once for free.
+
+```c
+const vv_Theme *t = vv_theme();       // current
+vv_set_theme(&my_theme);              // triggers a global animated transition
+vv_Theme base = vv_theme_dark();      // sensible starting palette
+```
+
+---
+
+## 5. Built-in widgets
+
+Widgets are **emit-only**: they push a message on interaction and return their
+node handle (for `vv_state` or interaction queries). The `key` argument gives
+stable identity inside loops/conditionals — pass `NULL` to fall back on sequence
+order.
+
+```c
+vv_button(c, "ok", "Save", MSG_SAVE, VV_NO_PAYLOAD);       // click -> MSG_SAVE
+vv_checkbox(c, "a", "Wrap", wrap, MSG_WRAP);               // emits !value
+vv_toggle(c, "t", enabled, MSG_ENABLE);
+vv_slider(c, "vol", vol, 0.f, 1.f, MSG_VOL);               // emits new float
+vv_drag_number(c, "x", x, /*speed*/0.5f, -100, 100, MSG_X);
+vv_list_item(c, "row3", "Item 3", selected, MSG_PICK, vv_pi(3));
+vv_text_field(c, "name", buf, sizeof buf, "Name…", MSG_NAME); // edits buf in place
+vv_label(c, "Plain");  vv_label_muted(c, "Secondary");
+```
+
+Controlled widgets (checkbox/toggle/slider) take the *current* value to render
+and emit the *new* value in the payload — your `update` writes it back. Read the
+payload by kind: `ev.data.as_int` / `.as_float` / `.as_ptr` / `.as_str`.
+
+### Payloads
+
+A message carries a small union. Construct terse ones with `vv_pi` (int),
+`vv_pf` (float), `vv_pp` (ptr), `vv_ps` (const char\*), or `VV_NO_PAYLOAD`. A 2D
+point packs by value with `vv_pv2(vec)` / `vv_as_v2(payload)` — used by move
+events so a cursor position needs no allocation.
+
+### Extra interaction bindings
+
+Every interactive widget has an `_on` variant taking a `vv_On` for
+hover/press/double-click/move messages. You can also attach these to *any* plain
+box with `vv_on`:
+
+```c
+uint32_t card = vv_box(c, decl, style);
+/* build children */
+vv_end_box(c);
+vv_on(c, card, (vv_On){ .hover = MSG_HOVER_CARD, .dbl = MSG_OPEN });
+```
+
+`.move` is special: it's opt-in and it's the *only* thing that makes the view
+rebuild on plain pointer motion (the payload is the cursor position). Leave it
+unset and mouse movement that doesn't change hover/focus won't cost a rebuild.
+
+---
+
+## 6. Value bindings (two-way, no update case)
+
+Sometimes a control just edits a variable and a full message round-trip is
+ceremony. Wrap the variable in a `vv_Value` and use a `_bound` widget: it reads
+the current value to render and, on change, emits the reserved `VV_MSG_BIND`
+which the driver applies through the pointer *before* `update` runs. No `update`
+case needed.
+
+```c
+float gain = 0.5f;
+static const vv_ValueMeta gain_meta = { .name="Gain", .min=0, .max=1, .curve=2.0f };
+
+vv_slider_bound(c, "gain", vv_f32(&gain, &gain_meta));   // honors min/max/curve
+vv_drag_number_bound(c, "x", vv_f32(&x, NULL), 0.25f);
+vv_checkbox_bound(c, "mute", "Mute", vv_boolval(&muted, NULL));
+```
+
+`vv_ValueMeta` carries `min`/`max` and a perceptual `curve` (1 = linear, >1 =
+finer control near min). Drag-bound widgets bracket a whole drag as one edit
+(`vv_begin_edit`/`vv_end_edit`, bumping `edit_generation`) so it's a single undo
+step, not one per frame. `VV_VAL_READONLY` in the flags makes a widget display
+but not write.
+
+Use messages when a change has consequences (recompute, network, navigation);
+use bindings for plain "edit this number" knobs.
+
+---
+
+## 7. Strings
+
+Verve ships fat-pointer strings (`vv_Str` is a NUL-terminated `char*` with a
+length/capacity header before the data — so it's a drop-in `const char*`). They
+allocate from an arena; the point of the exercise is `str_format` plus the usual
+operations:
+
+```c
+vv_Str s = vv_str_format(arena, "%d items, %.1f%%", n, pct);
+size_t  n_len = vv_str_len(s);                 // O(1)
+vv_Str *parts = vv_str_split(arena, csv, ',', &count);
+vv_Str joined = vv_str_join(arena, items, count, ", ");
+bool   ok = vv_str_starts_with(s, "http");
+```
+
+Also available: `vv_str_dup/from/cat/sub/trim/lower/upper`, `vv_str_eq`,
+`vv_str_ends_with`, `vv_str_find`, `vv_str_contains`.
+
+Inside `view`, the shortcut is `vv_fmt(c, fmt, ...)`: it formats into the frame
+arena, valid until the next frame — long enough for the text widget to copy it —
+so labels need no scratch buffer:
+
+```c
+vv_text(c, vv_fmt(c, "%.1f s", elapsed), VV_STYLE(.fg = t->text));
+```
+
+---
+
+## 8. Writing a custom widget
+
+There is no widget base class or registry — a widget is just a function using
+the public API. The built-ins are the acceptance test for that API: if a
+built-in needed private access, the API would be wrong. Two ingredients you'll
+reach for:
+
+- **`vv_state(ctx, id, T)`** — persistent, zeroed-on-first-use storage attached
+  to a node, freed when the node dies. This is the one privileged call, for
+  widgets that need memory between frames (a text field's cursor, a fold's open
+  flag).
+- **Interaction queries** — `vv_hovered/pressed/clicked/active/focused/`
+  `vv_double_clicked(ctx, id)` and `vv_drag_delta(ctx, id)`. These reflect the
+  hit test run at `begin_frame` (current pointer vs. *last* frame's geometry —
+  the deliberate one-frame lag).
+
+A minimal expandable section that emits a message when toggled and animates its
+own chevron via style targets:
+
+```c
+// Returns whether it is open (persisted in node state).
+bool my_fold(vv_Ctx *c, const char *key, const char *title, vv_Msg on_toggle) {
+  const vv_Theme *t = vv_theme();
+
+  uint32_t head = vv_box_keyed(c, key, strlen(key),
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .padding = {8,6,8,6}, .gap = 6),
+      VV_STYLE(.bg = t->surface, .radius = {6,6,6,6}));
+
+  bool *open = vv_state(c, head, bool);          // persistent per-node flag
+  if (vv_clicked(c, head)) {
+    *open = !*open;
+    if (on_toggle) vv_emit(c, on_toggle, vv_pi(*open));
+  }
+
+  // Chevron rotates by declaring a different transform target; the spring does
+  // the motion. Text as a stand-in glyph here.
+  vv_text(c, *open ? "v" : ">", VV_STYLE(.fg = t->text_muted));
+  vv_text(c, title, VV_STYLE(.fg = t->text));
+  vv_end_box(c);
+  return *open;
+}
+```
+
+Called like any built-in:
+
+```c
+if (my_fold(c, "adv", "Advanced", MSG_FOLD)) {
+  /* build the section's contents */
+}
+```
+
+Notes:
+
+- Take a primary `vv_Msg` (and payload) for the main action; add a `vv_On`
+  parameter if you want to expose hover/press hooks — mirror the built-ins'
+  `_on` convention.
+- Emit from the widget with `vv_emit(ctx, msg, payload)`; never mutate app state
+  from inside a widget (that's `update`'s job).
+- Give containers a stable `key` when they live in loops so identity — and thus
+  animation and `vv_state` — survives reordering.
+
+---
+
+## 9. Performance: idle mode and rebuild gating
+
+Verve runs three frame tiers: **BUILD** (reconcile the tree), **PRESENT**
+(advance springs, re-emit commands), and **IDLE** (nothing changed — skip the
+frame). `vv_run_frame` picks the tier for you:
+
+- A rebuild happens only when hover/focus changed, a press/release edge fired,
+  something is being dragged, there was wheel/key/text input, the tree was
+  marked dirty, or it's the first frame. **Plain mouse motion that doesn't
+  change what's hovered does not rebuild.**
+- With `vv_set_idle_mode(ctx, true)`, once springs settle and there's no input,
+  `vv_run_frame` returns `NULL` and you skip drawing/swapping — effectively 0%
+  CPU on a static screen.
+- Force a rebuild yourself with `vv_invalidate(ctx)` (e.g. after loading data,
+  or on a hot-reload swap).
+
+If you need a widget to react to raw cursor movement (a custom canvas, a
+hover-tracking tooltip), give it a `.move` message via `vv_on` — that's the
+explicit opt-in back into per-motion rebuilds, scoped to just that node.
+
+---
+
+## 10. Hot-reloading the view (optional workflow)
+
+`examples/hot/` shows editing your UI while the app keeps running. The trick:
+**state lives in the host; only the `view`/`update` functions live in a `.so`.**
+The host `dlopen`s the module and swaps it when the file's mtime changes, so a
+reload preserves the counter, scroll position, everything.
+
+- `examples/hot/app.h` — shared `App` state + message enum, plus the two
+  exported symbols (`view_build`, `view_update`).
+- `examples/hot/view.c` — the reloadable module. Uses only the public API.
+- `examples/hot/host.c` — owns the window/GL/state/loop, polls the mtime, and
+  `dlopen`s a fresh copy on change (copied to a unique `/tmp` name each time to
+  defeat `dlopen`'s path cache). On reload it calls `vv_invalidate` so the new
+  output shows even under idle mode.
+
+```sh
+make hot          # build just build/hotview.so
+./build/hotdemo   # run it
+# ...now edit examples/hot/view.c, then `make hot` again — the window updates
+```
+
+This is the cheap path to a live-editing feel without embedding a scripting
+language.
+
+---
+
+## 11. Build & wiring reference
+
+```sh
+make            # library + tests + headless demo (clang)
+make test       # run the suite
+make gui        # SDL3/GL windowed examples (mycounter, sevenguis, gui_demo)
+make hot        # the hot-reload .so
+```
+
+The **core** (`libverve.a`) has no backend dependency — it emits a flat
+`vv_CommandBuffer`. Rendering is a separate concern: the bundled backend
+(`backends/vv_sdl_gl.c`, SDL3 + OpenGL 3.3 + libepoxy + stb_truetype) turns that
+buffer into pixels. To port to another backend you implement the `vv_Backend`
+interface and a `vv_render` dispatch; the application code above doesn't change.
+
+Minimal wiring for any backend:
+
+1. `vv_init(&ctx)` once; `vv_shutdown` at the end.
+2. `vv_set_measure_fn(&ctx, measure, ud)` so layout can size text.
+3. Each frame: feed input + window size, call `vv_run_frame`, and if it returns
+   non-NULL hand the buffer to `vv_render`.
+
+---
+
+## Where to look next
+
+| You want… | Read |
+|---|---|
+| The full architecture & rationale | `verve-design.md` |
+| A minimal end-to-end app | `examples/mycounter.c` |
+| A bigger app (7GUIs tasks) | `examples/sevenguis.c` |
+| Live-editing workflow | `examples/hot/` |
+| Exact signatures | headers in `include/verve/` |
