@@ -143,6 +143,7 @@ typedef struct {
     const char *text;
     vv_Color    color;
     float       size;   // 0 => theme font size
+    vv_FontID   font;   // 0 => theme font; set to a bold/italic face for real weight
 } vv_Span;
 void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n);
 

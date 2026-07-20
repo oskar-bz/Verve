@@ -1879,13 +1879,14 @@ void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n) {
     if (!p) continue;
     float sz = spans[s].size > 0 ? spans[s].size : t->font_size;
     vv_Color col = (spans[s].color.a > 0.001f) ? spans[s].color : t->text;
+    vv_FontID fnt = spans[s].font ? spans[s].font : t->font;
     while (*p) {
       while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++; // skip ws
       const char *w = p;
       while (*p && *p != ' ' && *p != '\n' && *p != '\t' && *p != '\r') p++;
       if (p > w)
         vv_text(ctx, vv_fmt(ctx, "%.*s", (int)(p - w), w),
-                VV_STYLE(.fg = col, .font_size = sz, .font = t->font));
+                VV_STYLE(.fg = col, .font_size = sz, .font = fnt));
     }
   }
   vv_end_box(ctx);

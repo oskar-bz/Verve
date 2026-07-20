@@ -14,6 +14,7 @@
 #include <string.h>
 
 static const vv_Theme *TH;
+static vv_FontID BOLD; // a real bold face for **bold** and headings
 
 enum { MSG_EDIT = 1, MSG_OPEN, MSG_SAVE, MSG_UNDO, MSG_REDO };
 
@@ -36,7 +37,7 @@ static void inline_spans(vv_Ctx *c, const char *s, int len, vv_Span *sp, int *ns
     if (i + 1 < len && s[i] == '*' && s[i + 1] == '*') {          // **bold**
       int j = i + 2;
       while (j + 1 < len && !(s[j] == '*' && s[j + 1] == '*')) j++;
-      sp[(*ns)++] = (vv_Span){vv_fmt(c, "%.*s", j - (i + 2), s + i + 2), TH->text, TH->font_size + 1};
+      sp[(*ns)++] = (vv_Span){vv_fmt(c, "%.*s", j - (i + 2), s + i + 2), TH->text, 0, BOLD};
       i = j + 2;
     } else if (s[i] == '*') {                                      // *italic*
       int j = i + 1;
@@ -81,7 +82,7 @@ static void render_md(vv_Ctx *c, App *a) {
       int h = 0; while (h < len && p[h] == '#') h++;
       int off = h; while (off < len && p[off] == ' ') off++;
       float bump = h == 1 ? 12 : h == 2 ? 7 : 3;
-      vv_Span sp[1] = {{vv_fmt(c, "%.*s", len - off, p + off), TH->text, TH->font_size + bump}};
+      vv_Span sp[1] = {{vv_fmt(c, "%.*s", len - off, p + off), TH->text, TH->font_size + bump, BOLD}};
       vv_rich_text(c, key, sp, 1);
     } else if ((p[0] == '-' || p[0] == '*') && len > 1 && p[1] == ' ') { // bullet
       VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .gap = 8), VV_STYLE(.bg = {0})) {
@@ -223,6 +224,10 @@ int main(void) {
   const char *fonts[] = {"/usr/share/fonts/noto/NotoSans-Regular.ttf",
                          "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", NULL};
   for (int i = 0; fonts[i]; i++) if (vv_app_load_font(app, fonts[i])) break;
+  const char *bolds[] = {"/usr/share/fonts/noto/NotoSans-Bold.ttf",
+                         "/usr/share/fonts/liberation/LiberationSans-Bold.ttf", NULL};
+  for (int i = 0; bolds[i]; i++) { vv_FontID b = vv_app_load_font(app, bolds[i]);
+                                   if (b) { BOLD = b; break; } }
 
   vv_Ctx ctx; vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
