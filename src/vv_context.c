@@ -422,6 +422,8 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 
     ctx->tree_dirty = false;
     ctx->last_tier  = VV_TIER_BUILD;
+    // A drag ends when the button is up; drop targets had their chance in view().
+    if (!ctx->input.mouse_down) ctx->dnd_dragging = false;
     return &ctx->cmds;
 }
 

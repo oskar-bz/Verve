@@ -310,6 +310,37 @@ vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index) {
     return vv_active(ctx, index) ? ctx->drag_delta : vv_v2(0, 0);
 }
 
+// ---- drag and drop --------------------------------------------------------
+bool vv_dnd_active(vv_Ctx *ctx) { return ctx->dnd_dragging; }
+
+bool vv_drag_source(vv_Ctx *ctx, uint32_t index, vv_Payload payload) {
+    vv_Node *n = vv_node(ctx, index);
+    if (!n) return false;
+    if (vv_active(ctx, index)) {
+        vv_Vec2 d = ctx->drag_delta;
+        if (ctx->dnd_dragging || d.x * d.x + d.y * d.y > 16.0f) { // 4px threshold
+            ctx->dnd_dragging = true;
+            ctx->dnd_source = n->id;
+            ctx->dnd_payload = payload;
+            return true; // this node is the live source
+        }
+    }
+    return ctx->dnd_dragging && ctx->dnd_source == n->id;
+}
+
+bool vv_drop_target(vv_Ctx *ctx, uint32_t index, vv_Payload *out) {
+    vv_Node *n = vv_node(ctx, index);
+    if (!n || !ctx->dnd_dragging) return false;
+    // The drop fires on the frame the button releases over a hovered target.
+    bool released = ctx->mouse_prev_down && !ctx->input.mouse_down;
+    if (released && vv_hovered(ctx, index) && ctx->dnd_source != n->id) {
+        if (out) *out = ctx->dnd_payload;
+        ctx->dnd_dragging = false; // consume
+        return true;
+    }
+    return false;
+}
+
 void vv_focus(vv_Ctx *ctx, uint32_t index) {
     vv_Node *n = vv_pool_get(&ctx->pool, index);
     if (n) ctx->focused_id = n->id;

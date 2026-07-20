@@ -6,6 +6,7 @@
 
 #include "vv_anim.h"     // IWYU pragma: export
 #include "vv_arena.h"    // IWYU pragma: export
+#include "vv_async.h"    // IWYU pragma: export
 #include "vv_backend.h"  // IWYU pragma: export
 #include "vv_color.h"    // IWYU pragma: export
 #include "vv_command.h"  // IWYU pragma: export

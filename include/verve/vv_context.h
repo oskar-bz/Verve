@@ -104,6 +104,12 @@ typedef struct vv_Ctx {
     vv_Vec2 drag_start;
     vv_Vec2 drag_delta;
     vv_ID   sb_drag;      // scroll container whose scrollbar thumb is being dragged
+
+    // Drag-and-drop: a payload carried from a drag source to a drop target while
+    // the button is held. Cleared at end-of-frame once the button is released.
+    bool      dnd_dragging;
+    vv_Payload dnd_payload;
+    vv_ID     dnd_source;
     float   sb_grab;      // pointer y minus thumb top at grab, for 1:1 tracking
     bool    focus_next;   // autofocus the next focusable node built
 
@@ -264,6 +270,14 @@ bool    vv_right_clicked(vv_Ctx *ctx, uint32_t index); // right-button click (co
 bool    vv_activated(vv_Ctx *ctx, uint32_t index);
 vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index);
 void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
+
+// Drag-and-drop. vv_drag_source begins carrying `payload` once a pressed node is
+// dragged past a small threshold; returns true while it is the active source.
+// vv_drop_target writes the payload to `*out` and returns true (once) when the
+// drag releases over it. vv_dnd_active reports whether any drag is in progress.
+bool vv_drag_source(vv_Ctx *ctx, uint32_t index, vv_Payload payload);
+bool vv_drop_target(vv_Ctx *ctx, uint32_t index, vv_Payload *out);
+bool vv_dnd_active(vv_Ctx *ctx);
 // Focus the next focusable node built this frame (autofocus a field on open).
 void    vv_request_focus_next(vv_Ctx *ctx);
 

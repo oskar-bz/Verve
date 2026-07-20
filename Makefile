@@ -4,7 +4,7 @@ CFLAGS   ?= -std=c11 -Iinclude -Wall -Wextra -Wshadow -Wconversion -g -O2 \
             -fno-omit-frame-pointer
 DEPFLAGS := -MMD -MP
 LDFLAGS  ?=
-LDLIBS   ?= -lm
+LDLIBS   ?= -lm -lpthread
 
 BUILD    := build
 SRC      := $(wildcard src/*.c)
