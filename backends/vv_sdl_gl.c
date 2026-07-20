@@ -342,8 +342,14 @@ static vv_Vec2 text_layout(vv_App *a, vv_FontID font, const char *s, int len,
             }
         }
         // Wrap before this chunk if it overflows (but never break a leading chunk).
+        // The 0.5px slack keeps text from wrapping at *exactly* its own natural
+        // width: pass-1 measures that width by summing glyph advances one-by-one,
+        // while this check sums the chunk separately, so float non-associativity
+        // can make (x+chunk_w) land an ULP past `wrap` — a spurious second line
+        // whose taller box then shifts cross-centered text. Sub-pixel slack is
+        // invisible for genuine overflow but kills the phantom wrap.
         bool breakable = cp != ' ';
-        if (wrap > 0 && x > 0 && breakable && (x + chunk_w) * sc > wrap) { maxw = fmaxf(maxw, x); x = 0; y += line_h; }
+        if (wrap > 0 && x > 0 && breakable && (x + chunk_w) * sc > wrap + 0.5f) { maxw = fmaxf(maxw, x); x = 0; y += line_h; }
 
         // Emit / advance the chunk's glyphs.
         for (int k = chunk_start; k < j;) {
