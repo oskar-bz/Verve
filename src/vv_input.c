@@ -60,7 +60,8 @@ static vv_ID interactive_target(vv_Ctx *ctx, vv_ID topmost) {
     return topmost;
 }
 
-static vv_ID hit_target(vv_Ctx *ctx, vv_Vec2 p) {
+// The raw topmost node under `p`, without resolving to a focusable target.
+static vv_ID hit_target_raw(vv_Ctx *ctx, vv_Vec2 p) {
     vv_ID hit = 0;
     uint32_t ov[64]; int nov = 0;
     // Pass 1: the normal tree, collecting overlay roots (z>0) instead of
@@ -76,7 +77,11 @@ static vv_ID hit_target(vv_Ctx *ctx, vv_Vec2 p) {
     }
     for (int i = 0; i < nov; i++)
         hit_test(&ctx->pool, ov[i], p, false, &hit, false, NULL, NULL, 0);
-    return interactive_target(ctx, hit);
+    return hit;
+}
+
+static vv_ID hit_target(vv_Ctx *ctx, vv_Vec2 p) {
+    return interactive_target(ctx, hit_target_raw(ctx, p));
 }
 
 // Route wheel to the hovered node or its nearest scrolling ancestor.
@@ -220,11 +225,14 @@ void vv_input_process(vv_Ctx *ctx) {
 
     // Right button: a click is a press+release on the same node (no capture/drag
     // semantics; that's what context menus need).
+    // Store the *raw* hit node (not its focusable target) so the click can
+    // bubble: vv_right_clicked() matches the hit node or any ancestor, letting
+    // an outer container's context menu fire even when an inner box was clicked.
     bool rdown = ctx->input.right_down, rwas = ctx->mouse_right_prev;
     if (rdown && !rwas) {
-        ctx->right_active_id = hit_target(ctx, m);
+        ctx->right_active_id = hit_target_raw(ctx, m);
     } else if (!rdown && rwas) {
-        if (ctx->right_active_id && hit_target(ctx, m) == ctx->right_active_id)
+        if (ctx->right_active_id && hit_target_raw(ctx, m) == ctx->right_active_id)
             ctx->right_clicked_id = ctx->right_active_id;
         ctx->right_active_id = 0;
     }
@@ -277,7 +285,20 @@ bool vv_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->
 bool vv_active(vv_Ctx *ctx, uint32_t index)  { return id_of(ctx, index) == ctx->active_id  && ctx->active_id; }
 bool vv_focused(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->focused_id && ctx->focused_id; }
 bool vv_double_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->double_clicked_id && ctx->double_clicked_id; }
-bool vv_right_clicked(vv_Ctx *ctx, uint32_t index) { return id_of(ctx, index) == ctx->right_clicked_id && ctx->right_clicked_id; }
+// True if this frame's right-click landed on `index` or anywhere in its
+// subtree — the event bubbles up, so a container handles clicks on its
+// descendants without every inner box having to opt out.
+bool vv_right_clicked(vv_Ctx *ctx, uint32_t index) {
+    if (!ctx->right_clicked_id) return false;
+    vv_ID want = id_of(ctx, index);
+    if (!want) return false;
+    uint32_t idx = vv_pool_find(&ctx->pool, ctx->right_clicked_id);
+    while (idx != VV_NIL) {
+        if (ctx->pool.nodes[idx].id == want) return true;
+        idx = ctx->pool.nodes[idx].parent;
+    }
+    return false;
+}
 bool vv_activated(vv_Ctx *ctx, uint32_t index) {
     if (!ctx->focused_id || id_of(ctx, index) != ctx->focused_id) return false;
     for (int i = 0; i < ctx->input.key_count; i++)
