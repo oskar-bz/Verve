@@ -204,6 +204,22 @@ static void pass3_height(vv_NodePool *pool, uint32_t idx) {
         }
         if (count > 1) sum += n->decl.gap * (float)(count - 1);
         intrinsic = pad + sum;
+    } else if (n->decl.wrap) { // wrapping ROW: children flow onto multiple lines
+        float avail = n->layout_rect.w - n->decl.padding.l - n->decl.padding.r;
+        float gap = n->decl.gap;
+        float x = 0, line_h = 0, total = 0;
+        for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
+            if (!in_flow(P(c))) continue;
+            float w = P(c)->layout_rect.w, chh = P(c)->fit_h;
+            if (x > 0 && x + gap + w > avail) {      // doesn't fit -> new line
+                total += line_h + gap;
+                x = w; line_h = chh;
+            } else {
+                x += (x > 0 ? gap : 0) + w;
+                line_h = vv_maxf(line_h, chh);
+            }
+        }
+        intrinsic = pad + total + line_h;            // + the last line
     } else { // ROW: cross axis is height -> max child
         float mx = 0;
         for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
@@ -311,6 +327,28 @@ static void position_children(vv_NodePool *pool, uint32_t idx) {
         float over_cross = vv_maxf(0, content_cross - (row ? ch_ : cw));
         n->scroll_max_x = n->decl.scroll_x ? (row ? over_main : over_cross) : 0;
         n->scroll_max_y = n->decl.scroll_y ? (row ? over_cross : over_main) : 0;
+    }
+
+    // Wrapping row: flow children left-to-right, breaking to a new line when the
+    // next child would overflow the content width. Left-aligned per line; the
+    // vertical gap between lines matches the horizontal gap.
+    if (row && n->decl.wrap) {
+        float x = ox, y = oy, line_h = 0;
+        bool first = true;
+        for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
+            vv_Node *ci = P(c);
+            if (ci->decl.has_absolute || (ci->flags & VV_FLAG_EXITING)) continue;
+            float w = ci->layout_rect.w, h = ci->layout_rect.h;
+            if (!first && x + w > ox + cw + 0.5f) {   // wrap to next line
+                x = ox; y += line_h + gap; line_h = 0;
+            }
+            ci->layout_rect.x = x;
+            ci->layout_rect.y = y;
+            x += w + gap;
+            line_h = vv_maxf(line_h, h);
+            first = false;
+        }
+        return; // absolute children in a wrap row are unusual; skip for simplicity
     }
 
     float cursor = row ? ox : oy;
