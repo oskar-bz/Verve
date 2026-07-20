@@ -24,6 +24,24 @@ static void ov_view(vv_Ctx *c, void *st) {
     }
 }
 
+// ---- 3: overlays are nudged on-screen (popovers don't clip at edges) -------
+static uint32_t g_clip, g_scrim;
+static void clip_view(vv_Ctx *c, void *st) {
+    (void)st;
+    // A full-window scrim (must stay put) plus a popover anchored past the
+    // bottom-right corner (must be pulled fully into view).
+    g_scrim = vv_box_keyed(c, "scrim", 5,
+        (vv_LayoutDecl){.has_absolute = true, .z = 1000,
+                        .absolute = vv_rect(0, 0, 400, 400)},
+        (vv_Style){.bg = vv_rgba(0, 0, 0, 0.2f)});
+    vv_end_box(c);
+    g_clip = vv_box_keyed(c, "pop", 3,
+        (vv_LayoutDecl){.has_absolute = true, .z = 1000,
+                        .absolute = vv_rect(380, 380, 100, 80)},
+        (vv_Style){.bg = vv_rgb(0, 0, 1)});
+    vv_end_box(c);
+}
+
 // ---- 2: virtualized scroll leaves no corpses -------------------------------
 static void row(vv_Ctx *c, int i, void *ud) {
     (void)ud;
@@ -72,6 +90,23 @@ int main(void) {
             int e = count_exiting(&ctx); if (e > maxexit) maxexit = e;
         }
         CHECK(maxexit == 0);
+        vv_shutdown(&ctx);
+    }
+
+    // 3) clamp: window 400x400. Popover at (380,380) size 100x80 overflows both
+    // edges -> pulled to (400-100-8, 400-80-8) = (292, 312). The full-window
+    // scrim stays at (0,0) since it's as large as the viewport.
+    {
+        vv_Ctx ctx; vv_init(&ctx); vv_set_window(&ctx, 400, 400, 1.0f);
+        vv_Input in = {0};
+        vv_begin_frame(&ctx, 0.016f, &in); clip_view(&ctx, NULL); vv_end_frame(&ctx);
+        vv_begin_frame(&ctx, 0.016f, &in); clip_view(&ctx, NULL); vv_end_frame(&ctx);
+        vv_Rect p = vv_pool_get(&ctx.pool, g_clip)->actual_rect;
+        CHECK_NEAR(p.x, 292.0f, 0.5f);
+        CHECK_NEAR(p.y, 312.0f, 0.5f);
+        vv_Rect s = vv_pool_get(&ctx.pool, g_scrim)->actual_rect;
+        CHECK_NEAR(s.x, 0.0f, 0.5f);
+        CHECK_NEAR(s.y, 0.0f, 0.5f);
         vv_shutdown(&ctx);
     }
 

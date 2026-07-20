@@ -335,6 +335,22 @@ static void position_children(vv_NodePool *pool, uint32_t idx) {
             float by = ch->decl.z > 0 ? 0.0f : oy;
             ch->layout_rect.x = bx + a.x;
             ch->layout_rect.y = by + a.y;
+            // Keep window-space overlays (popovers, menus, dropdowns, tooltips)
+            // on-screen: a popover anchored near an edge would otherwise clip at
+            // the window bounds, since it isn't a real OS window. Nudge it fully
+            // into view with a small margin. Skip any axis where the overlay is
+            // as large as the viewport — that's a full-window scrim/backdrop,
+            // which must stay put to cover everything.
+            if (ch->decl.z > 0 && g_ctx) {
+                const float m = 8.0f;
+                float ww = g_ctx->win_w, wh = g_ctx->win_h;
+                if (ch->layout_rect.w < ww)
+                    ch->layout_rect.x = vv_clampf(ch->layout_rect.x, m,
+                                                  ww - ch->layout_rect.w - m);
+                if (ch->layout_rect.h < wh)
+                    ch->layout_rect.y = vv_clampf(ch->layout_rect.y, m,
+                                                  wh - ch->layout_rect.h - m);
+            }
             continue;
         }
         if (ch->flags & VV_FLAG_EXITING) continue; // corpses keep last rect (§3.3)
