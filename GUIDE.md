@@ -721,6 +721,7 @@ right .w = vv_fixed(a->right_w);
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
 | Vector widgets: plot / xy_pad / curve_editor (the `vv_draw_*` canvas) | `examples/visualize.c` |
+| A real app: Markdown editor — rich text + undo/redo + file I/O | `examples/markdown.c` |
 | Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
 | A real app: live theme editor — palette + metrics (border/padding/gap) | `examples/theme_editor.c` |
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
