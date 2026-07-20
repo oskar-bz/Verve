@@ -20,7 +20,7 @@
 #define NROWS 10000
 #define ROWH  30.0f
 
-enum { MSG_SORT = 1, MSG_REFILTER };
+enum { MSG_SORT = 1, MSG_REFILTER, MSG_RESIZE };
 enum { COL_NAME, COL_AMOUNT, COL_STATUS };
 
 typedef struct { char name[28]; int amount; int status; } Row; // status 0 paid,1 due,2 overdue
@@ -30,6 +30,7 @@ typedef struct {
   int  visible[NROWS];   // derived: row indices passing the filter, in sort order
   int  nvisible;
   int  sort_col, sort_dir; // dir: +1 asc, -1 desc
+  float colw[3];           // column widths (Name grows; Amount/Status resizable)
   char filter[32];
   long sum;              // derived aggregates over the visible set
   double avg;
@@ -86,6 +87,12 @@ static void update(void *st, vv_Event ev) {
     break;
   }
   case MSG_REFILTER: recompute(t); break; // filter buffer already edited in place
+  case MSG_RESIZE: {
+    vv_Vec2 v = vv_as_v2(ev.data);         // x = column index, y = new width
+    int col = (int)v.x;
+    if (col >= 0 && col < 3) t->colw[col] = v.y;
+    break;
+  }
   default: break;
   }
 }
@@ -93,19 +100,19 @@ static void update(void *st, vv_Event ev) {
 // ---- the view layer: a dumb projection of the model ----
 static const char *STATUS[3] = {"paid", "due", "overdue"};
 
-static void cell_amount(vv_Ctx *c, int amount) {
+static void cell_amount(vv_Ctx *c, int amount, float w) {
   const vv_Theme *t = vv_theme();
-  VV_BOX(c, VV_LAYOUT(.w = vv_fixed(120), .h = vv_grow(1), .main = VV_ALIGN_END,
+  VV_BOX(c, VV_LAYOUT(.w = vv_fixed(w), .h = vv_grow(1), .main = VV_ALIGN_END,
                       .cross = VV_ALIGN_CENTER),
          VV_STYLE(.bg = {0})) {
     vv_text(c, vv_fmt(c, "%d", amount), VV_STYLE(.fg = t->text, .font_size = 14));
   }
 }
 
-static void cell_status(vv_Ctx *c, int status) {
+static void cell_status(vv_Ctx *c, int status, float w) {
   const vv_Theme *t = vv_theme();
   vv_Color col[3] = {vv_rgb(0.35f, 0.75f, 0.4f), vv_rgb(0.95f, 0.7f, 0.25f), t->danger};
-  VV_BOX(c, VV_LAYOUT(.w = vv_fixed(110), .h = vv_grow(1), .cross = VV_ALIGN_CENTER),
+  VV_BOX(c, VV_LAYOUT(.w = vv_fixed(w), .h = vv_grow(1), .cross = VV_ALIGN_CENTER),
          VV_STYLE(.bg = {0})) {
     VV_BOX(c, VV_LAYOUT(.padding = vv_hv(9, 3)),
            VV_STYLE(.bg = vv_rgba(col[status].r, col[status].g, col[status].b, 0.16f),
@@ -126,8 +133,8 @@ static void row_fn(vv_Ctx *c, int index, void *ud) {
     VV_BOX(c, VV_LAYOUT(.w = vv_grow(1), .cross = VV_ALIGN_CENTER), VV_STYLE(.bg = {0})) {
       vv_text(c, r->name, VV_STYLE(.fg = th->text, .font_size = 14));
     }
-    cell_amount(c, r->amount);
-    cell_status(c, r->status);
+    cell_amount(c, r->amount, t->colw[COL_AMOUNT]);
+    cell_status(c, r->status, t->colw[COL_STATUS]);
   }
 }
 
@@ -137,7 +144,7 @@ static void header_cell(vv_Ctx *c, Table *t, const char *label, int col, bool gr
   char key[8]; snprintf(key, sizeof key, "h%d", col);
   uint32_t h = vv_box_keyed(
       c, key, strlen(key),
-      (vv_LayoutDecl){.dir = VV_ROW, .w = grow ? vv_grow(1) : vv_fixed(col == COL_AMOUNT ? 120 : 110),
+      (vv_LayoutDecl){.dir = VV_ROW, .w = grow ? vv_grow(1) : vv_fixed(t->colw[col]),
                       .h = vv_grow(1), .cross = VV_ALIGN_CENTER,
                       .main = col == COL_AMOUNT ? VV_ALIGN_END : VV_ALIGN_START,
                       .padding = vv_hv(14, 0), .gap = 4},
@@ -146,8 +153,27 @@ static void header_cell(vv_Ctx *c, Table *t, const char *label, int col, bool gr
   if (t->sort_col == col)
     vv_text(c, t->sort_dir > 0 ? "\xe2\x96\xb2" : "\xe2\x96\xbc",
             VV_STYLE(.fg = th->accent_hi, .font_size = 10));
+
+  // Right-edge drag handle: resize a fixed-width column by dragging its border.
+  uint32_t grip = 0;
+  if (!grow) {
+    vv_Style ghov = {.bg = th->accent, .set = VV_STYLE_BG};
+    grip = vv_box_keyed(c, "grip", 4,
+        (vv_LayoutDecl){.w = vv_fixed(6), .h = vv_grow(1), .has_absolute = true,
+                        .absolute = vv_rect(t->colw[col] - 6, 0, 6, 36),
+                        .focusable = true, .cursor = VV_CURSOR_RESIZE_H},
+        (vv_Style){.hover = &ghov});
+    vv_end_box(c);
+  }
   vv_end_box(c);
-  if (vv_clicked(c, h)) vv_emit(c, MSG_SORT, vv_pi(col));
+
+  if (grip && vv_active(c, grip)) {
+    float left = vv_node(c, h)->actual_rect.x;
+    float neww = vv_clampf(vv_mouse(c).x - left, 70.0f, 400.0f);
+    vv_emit(c, MSG_RESIZE, vv_pv2(vv_v2((float)col, neww)));
+  } else if (vv_clicked(c, h)) {
+    vv_emit(c, MSG_SORT, vv_pi(col));
+  }
 }
 
 static void view(vv_Ctx *c, void *st) {
@@ -205,6 +231,7 @@ static void seed(Table *t) {
     t->rows[i].status = (int)((rng >> 20) % 3);
   }
   t->sort_col = COL_AMOUNT; t->sort_dir = -1;
+  t->colw[COL_NAME] = 0; t->colw[COL_AMOUNT] = 120; t->colw[COL_STATUS] = 110;
   recompute(t);
 }
 
