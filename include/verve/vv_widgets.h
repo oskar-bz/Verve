@@ -86,6 +86,46 @@ uint32_t vv_tabs(vv_Ctx *ctx, const char *key, const char *const *labels,
 uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
                      int count, int current, vv_Msg change);
 
+// ---- visualizer widgets (§14.5) -------------------------------------------
+// These draw freeform vector content via the vv_draw_* canvas (vv_draw.h) and
+// so need a backend that implements VV_CMD_POLY (the SDL/GL backend does).
+
+// A 2D value pad: drag the handle to set a point in [0,1]x[0,1] (y up). Emits
+// `change` with the new point packed via vv_pv2 (read back with vv_as_v2).
+uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change);
+
+// A read-only plot: axes/grid chrome plus one or more data series drawn as a
+// line, scatter, or bars. Non-interactive; purely a view of the data.
+typedef enum { VV_PLOT_LINE, VV_PLOT_SCATTER, VV_PLOT_BARS } vv_PlotKind;
+typedef struct {
+    const float *ys;      // sample values (required)
+    const float *xs;      // optional x coords; NULL => 0,1,2,...
+    int          count;
+    vv_Color     color;
+    vv_PlotKind  kind;
+    float        width;   // line width / point radius / bar inset (0 => default)
+} vv_PlotSeries;
+typedef struct {
+    float x_min, x_max;   // x data range; leave 0,0 with auto_x to fit data
+    float y_min, y_max;   // y data range; leave 0,0 with auto_y to fit data
+    bool  auto_x, auto_y; // derive the range from the data
+    bool  grid;           // draw gridlines
+    float height;         // fixed widget height in px (0 => grow to fill)
+} vv_PlotOpts;
+void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
+             vv_PlotOpts opts);
+
+// An editable curve: draggable control points in [0,1]x[0,1] (y up), connected
+// by a polyline. `pts` is the app's array (read-only here). Dragging a point
+// emits `change` with a vv_CurveEdit* payload (index + new position); update()
+// writes it back. Points are drawn in the order given.
+typedef struct { int index; vv_Vec2 pos; } vv_CurveEdit;
+uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
+                         int count, vv_Msg change);
+static inline const vv_CurveEdit *vv_as_curve_edit(vv_Payload p) {
+    return (const vv_CurveEdit *)p.as_ptr;
+}
+
 // A tree row indented by `depth`, with a disclosure caret when not a `leaf`.
 // Returns true when the row is clicked — the app toggles `expanded` (folders) or
 // selects (leaves). The app owns the hierarchy and recursion.

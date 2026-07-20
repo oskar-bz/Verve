@@ -449,6 +449,40 @@ so your drawing can't corrupt the UI and the UI can't clip into your viewport.
 `draw` must point at app-persistent memory (not the frame arena). See
 `examples/playground.c` for a live shader viewport wrapped in Verve controls.
 
+### Vector content: the `vv_draw_*` canvas
+
+`vv_custom` hands you raw GL — great for a shader, overkill for a plot line. When
+you just need strokes and fills (a chart, an editable curve, a crosshair), attach
+a **draw-list** to any node instead. During build, call the `vv_draw_*` builders
+with the node handle and coordinates *local* to that node (origin at its
+top-left); present lowers them to the backend-agnostic `VV_CMD_POLY` primitive,
+so the geometry clips, pans, and spring-animates with the node for free — no GPU
+code, and it works on any backend that implements `VV_CMD_POLY` (the SDL/GL one
+does):
+
+```c
+uint32_t id = vv_box_keyed(c, "chart", 5,
+    VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(160), .clip = true),
+    VV_STYLE(.bg = t->surface));
+vv_Vec2 pts[3] = {{0,160},{100,20},{200,90}}; // local pixels
+vv_draw_polyline(c, id, pts, 3, 2.0f, t->accent);
+vv_draw_points(c, id, pts, 3, 3.0f, t->accent);   // dots at each vertex
+vv_end_box(c);
+```
+
+Builders: `vv_draw_line`, `vv_draw_polyline`, `vv_draw_polygon` (convex fill),
+`vv_draw_points`. Coordinates are copied into the frame arena, so your arrays
+need not outlive the call.
+
+This canvas is what the visualizer widgets are built on:
+
+- **`vv_xy_pad`** — a 2D value pad; drag the handle, emits the point in `[0,1]²`.
+- **`vv_plot`** — axes/grid plus line/scatter/bar series over your data.
+- **`vv_curve_editor`** — draggable control points connected by a polyline;
+  each drag emits a `vv_CurveEdit` your `update()` writes back.
+
+See `examples/visualize.c` for all three in one dashboard.
+
 ---
 
 ## 9. Performance: idle mode and rebuild gating
@@ -682,6 +716,7 @@ right .w = vv_fixed(a->right_w);
 | A pure scorer driving an animated fuzzy finder | `examples/finder.c` |
 | A drop-in tree/style inspector | `examples/inspect/vv_inspect.h` |
 | Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
+| Vector widgets: plot / xy_pad / curve_editor (the `vv_draw_*` canvas) | `examples/visualize.c` |
 | Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
 | A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |

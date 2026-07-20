@@ -1,7 +1,9 @@
 #include "verve/vv_widgets.h"
+#include "verve/vv_draw.h"
 #include "verve/vv_layout.h"
 #include "verve/vv_value.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1787,4 +1789,216 @@ void vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at,
 void vv_context_menu_end(vv_Ctx *ctx) {
   vv_end_box(ctx);
   g_ctxmenu_open = NULL;
+}
+
+// ==========================================================================
+// Visualizer widgets (§14.5). These lean on the vv_draw_* canvas (vv_draw.h)
+// for vector content and otherwise follow the slider pattern: read the node's
+// actual_rect, map the pointer while active, emit the new value.
+// ==========================================================================
+
+// ---- xy_pad ---------------------------------------------------------------
+uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             VV_LAYOUT(.w = {VV_SIZE_GROW, 1, 140, 0},
+                                             .h = vv_fixed(160),
+                                             .focusable = true, .clip = true),
+                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                                        .border_width = vv_all(1),
+                                        .border_color = t->border));
+  vv_Node *n = vv_node(ctx, id);
+  float w = n->actual_rect.w > 1.0f ? n->actual_rect.w : 140.0f;
+  float h = n->actual_rect.h > 1.0f ? n->actual_rect.h : 160.0f;
+
+  // Inset so handles at the 0/1 edges aren't clipped by the box.
+  const float M = 10.0f;
+  float iw = vv_maxf(w - 2 * M, 1.0f), ih = vv_maxf(h - 2 * M, 1.0f);
+
+  vv_Vec2 out = value;
+  if (vv_pressed(ctx, id)) vv_focus(ctx, id);
+  if (vv_active(ctx, id)) {
+    float rx = vv_clampf((vv_mouse(ctx).x - n->actual_rect.x - M) / iw, 0.0f, 1.0f);
+    float ry = vv_clampf((vv_mouse(ctx).y - n->actual_rect.y - M) / ih, 0.0f, 1.0f);
+    out = vv_v2(rx, 1.0f - ry); // y is up
+  }
+
+  // Center gridlines, then the live crosshair through the handle.
+  vv_Color grid = vv_rgba(t->border.r, t->border.g, t->border.b, 0.6f);
+  vv_draw_line(ctx, id, vv_v2(0, h * 0.5f), vv_v2(w, h * 0.5f), 1.0f, grid);
+  vv_draw_line(ctx, id, vv_v2(w * 0.5f, 0), vv_v2(w * 0.5f, h), 1.0f, grid);
+  float hx = M + out.x * iw, hy = M + (1.0f - out.y) * ih;
+  vv_draw_line(ctx, id, vv_v2(0, hy), vv_v2(w, hy), 1.0f, t->accent_lo);
+  vv_draw_line(ctx, id, vv_v2(hx, 0), vv_v2(hx, h), 1.0f, t->accent_lo);
+
+  // Handle (absolute child so it FLIP-springs when the value jumps).
+  vv_Style hover = {.bg = t->accent_hi};
+  vv_box_keyed(ctx, "h", 1,
+               VV_LAYOUT(.w = vv_fixed(16), .h = vv_fixed(16), .has_absolute = true,
+                               .absolute = vv_rect(hx - 8, hy - 8, 16, 16)),
+               VV_STYLE(.bg = t->accent, .radius = vv_r(8),
+                          .border_width = vv_all(2), .border_color = t->on_accent,
+                          .hover = &hover));
+  vv_end_box(ctx);
+  vv_end_box(ctx);
+
+  if (out.x != value.x || out.y != value.y) vv_emit(ctx, change, vv_pv2(out));
+  return id;
+}
+
+// ---- plot -----------------------------------------------------------------
+void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
+             vv_PlotOpts o) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             VV_LAYOUT(.w = vv_grow(1),
+                                             .h = o.height > 0 ? vv_fixed(o.height) : vv_grow(1),
+                                             .clip = true),
+                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                                        .border_width = vv_all(1),
+                                        .border_color = t->border));
+  vv_Node *nd = vv_node(ctx, id);
+  float w = nd->actual_rect.w, h = nd->actual_rect.h;
+  if (w < 2.0f || h < 2.0f) { vv_end_box(ctx); return; } // not laid out yet
+
+  const float PAD = 10.0f;
+  float ix = PAD, iy = PAD, iw = w - 2 * PAD, ih = h - 2 * PAD;
+  if (iw < 1.0f || ih < 1.0f) { vv_end_box(ctx); return; }
+
+  // Ranges: explicit, or fit to the data.
+  float xmin = o.x_min, xmax = o.x_max, ymin = o.y_min, ymax = o.y_max;
+  if (o.auto_x || xmin == xmax) { xmin = 1e30f; xmax = -1e30f; }
+  if (o.auto_y || ymin == ymax) { ymin = 1e30f; ymax = -1e30f; }
+  if (o.auto_x || o.auto_y || o.x_min == o.x_max || o.y_min == o.y_max) {
+    for (int s = 0; s < n; s++) {
+      const vv_PlotSeries *ps = &series[s];
+      for (int k = 0; k < ps->count; k++) {
+        float x = ps->xs ? ps->xs[k] : (float)k;
+        float y = ps->ys[k];
+        if (o.auto_x || o.x_min == o.x_max) { xmin = vv_minf(xmin, x); xmax = vv_maxf(xmax, x); }
+        if (o.auto_y || o.y_min == o.y_max) { ymin = vv_minf(ymin, y); ymax = vv_maxf(ymax, y); }
+      }
+    }
+  }
+  if (xmax <= xmin) { xmin -= 0.5f; xmax += 0.5f; }
+  if (ymax <= ymin) { ymin -= 0.5f; ymax += 0.5f; }
+
+  // Gridlines (5x4), drawn under the data.
+  if (o.grid) {
+    vv_Color g = vv_rgba(t->border.r, t->border.g, t->border.b, 0.5f);
+    for (int i = 0; i <= 4; i++) {
+      float gx = ix + iw * (float)i / 4.0f;
+      vv_draw_line(ctx, id, vv_v2(gx, iy), vv_v2(gx, iy + ih), 1.0f, g);
+    }
+    for (int i = 0; i <= 4; i++) {
+      float gy = iy + ih * (float)i / 4.0f;
+      vv_draw_line(ctx, id, vv_v2(ix, gy), vv_v2(ix + iw, gy), 1.0f, g);
+    }
+  }
+
+  // Each series, mapped data-space -> local pixels (y flipped: ymax at top).
+  vv_Vec2 buf[1024];
+  float base = iy + vv_remapf(vv_clampf(0.0f, ymin, ymax), ymax, ymin, 0.0f, ih);
+  for (int s = 0; s < n; s++) {
+    const vv_PlotSeries *ps = &series[s];
+    if (ps->count < 1) continue;
+    int step = ps->count > 1024 ? (ps->count + 1023) / 1024 : 1; // decimate
+    int m = 0;
+    for (int k = 0; k < ps->count && m < 1024; k += step) {
+      float x = ps->xs ? ps->xs[k] : (float)k;
+      buf[m++] = vv_v2(ix + vv_remapf(x, xmin, xmax, 0.0f, iw),
+                       iy + vv_remapf(ps->ys[k], ymax, ymin, 0.0f, ih));
+    }
+    float lw = ps->width > 0 ? ps->width : 2.0f;
+    switch (ps->kind) {
+      case VV_PLOT_SCATTER:
+        vv_draw_points(ctx, id, buf, m, lw > 0 ? lw : 3.0f, ps->color);
+        break;
+      case VV_PLOT_BARS: {
+        float bw = iw / (float)(m > 0 ? m : 1) * 0.6f;
+        if (bw < 1.0f) bw = 1.0f;
+        for (int k = 0; k < m; k++) {
+          vv_Vec2 q[4] = {{buf[k].x - bw / 2, buf[k].y}, {buf[k].x + bw / 2, buf[k].y},
+                          {buf[k].x + bw / 2, base}, {buf[k].x - bw / 2, base}};
+          vv_draw_polygon(ctx, id, q, 4, ps->color);
+        }
+      } break;
+      case VV_PLOT_LINE:
+      default:
+        vv_draw_polyline(ctx, id, buf, m, lw, ps->color);
+        break;
+    }
+  }
+
+  // Corner y-range labels.
+  vv_box_keyed(ctx, "yl", 2,
+               VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(ix + 2, iy - 2, 60, 16)),
+               VV_STYLE(.bg = {0}));
+  vv_text(ctx, vv_fmt(ctx, "%.2f", (double)ymax),
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
+  vv_end_box(ctx);
+  vv_box_keyed(ctx, "yl0", 3,
+               VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(ix + 2, iy + ih - 16, 60, 16)),
+               VV_STYLE(.bg = {0}));
+  vv_text(ctx, vv_fmt(ctx, "%.2f", (double)ymin),
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
+  vv_end_box(ctx);
+
+  vv_end_box(ctx);
+}
+
+// ---- curve_editor ---------------------------------------------------------
+uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
+                         int count, vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(180), .clip = true),
+                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                                        .border_width = vv_all(1),
+                                        .border_color = t->border));
+  vv_Node *nd = vv_node(ctx, id);
+  float w = nd->actual_rect.w > 1.0f ? nd->actual_rect.w : 200.0f;
+  float h = nd->actual_rect.h > 1.0f ? nd->actual_rect.h : 180.0f;
+  const float M = 10.0f; // inset so edge handles aren't clipped
+  float iw = vv_maxf(w - 2 * M, 1.0f), ih = vv_maxf(h - 2 * M, 1.0f);
+
+  // Gridlines under the curve.
+  vv_Color g = vv_rgba(t->border.r, t->border.g, t->border.b, 0.5f);
+  for (int i = 1; i < 4; i++) {
+    vv_draw_line(ctx, id, vv_v2(w * (float)i / 4, 0), vv_v2(w * (float)i / 4, h), 1.0f, g);
+    vv_draw_line(ctx, id, vv_v2(0, h * (float)i / 4), vv_v2(w, h * (float)i / 4), 1.0f, g);
+  }
+
+  // The polyline through the (normalized, y-up) control points.
+  int m = count > 128 ? 128 : count;
+  vv_Vec2 buf[128];
+  for (int k = 0; k < m; k++)
+    buf[k] = vv_v2(M + vv_clampf(pts[k].x, 0, 1) * iw,
+                   M + (1.0f - vv_clampf(pts[k].y, 0, 1)) * ih);
+  if (m >= 2) vv_draw_polyline(ctx, id, buf, m, 2.0f, t->accent);
+
+  // Draggable control points (each its own interactive child).
+  vv_Style hover = {.bg = t->accent_hi};
+  for (int k = 0; k < m; k++) {
+    uint32_t pid = vv_box_keyed(ctx, vv_fmt(ctx, "p%d", k), 0,
+                                VV_LAYOUT(.w = vv_fixed(14), .h = vv_fixed(14),
+                                                .has_absolute = true, .focusable = true,
+                                                .absolute = vv_rect(buf[k].x - 7, buf[k].y - 7, 14, 14)),
+                                VV_STYLE(.bg = t->knob, .radius = vv_r(7),
+                                           .border_width = vv_all(2),
+                                           .border_color = t->accent, .hover = &hover));
+    vv_end_box(ctx);
+    if (vv_pressed(ctx, pid)) vv_focus(ctx, pid);
+    if (vv_active(ctx, pid)) {
+      float nx = vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - M) / iw, 0.0f, 1.0f);
+      float ny = vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - M) / ih, 0.0f, 1.0f);
+      vv_CurveEdit *e = vv_arena_alloc(&ctx->frame, sizeof *e);
+      e->index = k;
+      e->pos = vv_v2(nx, 1.0f - ny);
+      vv_emit(ctx, change, vv_pp(e));
+    }
+  }
+
+  vv_end_box(ctx);
+  return id;
 }

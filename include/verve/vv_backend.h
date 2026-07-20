@@ -22,6 +22,7 @@ typedef struct vv_Backend {
     void (*draw_rects)(void *ctx, const vv_CmdRect *rects, int n);
     void (*draw_text)(void *ctx, const vv_CmdText *runs, int n);
     void (*draw_image)(void *ctx, const vv_CmdImage *imgs, int n);
+    void (*draw_polys)(void *ctx, const vv_CmdPoly *polys, int n);
 
     void (*push_scissor)(void *ctx, vv_Rect r);
     void (*pop_scissor)(void *ctx);

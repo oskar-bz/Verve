@@ -160,6 +160,7 @@ static uint32_t open_node(vv_Ctx *ctx, const char *key, size_t klen,
     n->child_count  = 0;
     n->on_move      = VV_MSG_NONE; // re-subscribed each build via vv_on()
     n->custom       = NULL;        // re-set each build via vv_custom()
+    n->draw         = NULL;        // re-filled each build via vv_draw_*()
 
     // Append to parent's freshly-reset child list.
     if (parent->first_child == VV_NIL) {

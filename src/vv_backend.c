@@ -13,8 +13,9 @@ void vv_render(const vv_Backend *b, const vv_CommandBuffer *cmds,
     while (i < cmds->count) {
         vv_CmdKind kind = cmds->items[i].kind;
 
-        // Coalesce a run of RECT/TEXT/IMAGE into a temp array on the stack.
-        if (kind == VV_CMD_RECT || kind == VV_CMD_TEXT || kind == VV_CMD_IMAGE) {
+        // Coalesce a run of RECT/TEXT/IMAGE/POLY into a temp array on the stack.
+        if (kind == VV_CMD_RECT || kind == VV_CMD_TEXT || kind == VV_CMD_IMAGE ||
+            kind == VV_CMD_POLY) {
             uint32_t j = i;
             while (j < cmds->count && cmds->items[j].kind == kind) j++;
             int n = (int)(j - i);
@@ -38,6 +39,12 @@ void vv_render(const vv_Backend *b, const vv_CommandBuffer *cmds,
                     vv_CmdImage tmp[64]; int m = 0;
                     while (k < j && m < 64) tmp[m++] = cmds->items[k++].as.image;
                     b->draw_image(b->ctx, tmp, m);
+                }
+            } else if (kind == VV_CMD_POLY && b->draw_polys) {
+                for (uint32_t k = i; k < j; ) {
+                    vv_CmdPoly tmp[64]; int m = 0;
+                    while (k < j && m < 64) tmp[m++] = cmds->items[k++].as.poly;
+                    b->draw_polys(b->ctx, tmp, m);
                 }
             }
             (void)n;

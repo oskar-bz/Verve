@@ -58,6 +58,10 @@ typedef struct vv_Node {
     // node's actual_rect instead of a fill. Points at app-persistent memory.
     const vv_CustomDraw *custom;
 
+    // Vector draw-list (§14.5): frame-arena polylines/polygons in local space,
+    // attached by the vv_draw_* builders. Present lowers each to a VV_CMD_POLY.
+    const struct vv_DrawList *draw;
+
     // Text leaves stash their frame-arena string copy here (separate from
     // widget_state, which the freelist allocator owns).
     const char *text;

@@ -57,9 +57,9 @@ struct vv_App {
     SDL_WindowID  win_id;   // for routing events in the multi-window pump
     vv_Backend    backend;
 
-    GLuint rect_prog, text_prog;
+    GLuint rect_prog, text_prog, poly_prog;
     GLuint vao, vbo;
-    GLint  rect_u_vp, text_u_vp, text_u_tex;
+    GLint  rect_u_vp, text_u_vp, text_u_tex, poly_u_vp;
 
     FontSystem *fs;         // shared with GL-sharing children
     bool   owns_fs;         // root window frees it
@@ -188,6 +188,23 @@ static const char *TEXT_FS =
     "in vec2 v_uv; in vec4 v_color; out vec4 frag;\n"
     "uniform sampler2D u_tex;\n"
     "void main(){ float a=texture(u_tex,v_uv).r; frag=vec4(v_color.rgb, v_color.a*a); }\n";
+
+// Solid triangles — the vector primitive (VV_CMD_POLY). Same logical->NDC map
+// as the rect/text shaders; colour comes per-vertex, no SDF.
+static const char *POLY_VS =
+    "#version 330 core\n"
+    "layout(location=0) in vec2 a_pos;\n"
+    "layout(location=1) in vec4 a_color;\n"
+    "uniform vec2 u_vp;\n"
+    "out vec4 v_color;\n"
+    "void main(){ v_color=a_color;\n"
+    "  vec2 ndc=vec2(a_pos.x/u_vp.x*2.0-1.0, 1.0-a_pos.y/u_vp.y*2.0);\n"
+    "  gl_Position=vec4(ndc,0.0,1.0); }\n";
+
+static const char *POLY_FS =
+    "#version 330 core\n"
+    "in vec4 v_color; out vec4 frag;\n"
+    "void main(){ frag=v_color; }\n";
 
 // ---- vertex scratch -------------------------------------------------------
 
@@ -489,6 +506,88 @@ static void draw_text(void *ctx, const vv_CmdText *runs, int n) {
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(a->vcount / 8));
 }
 
+// ---- vector polys (VV_CMD_POLY) -------------------------------------------
+// Solid triangles in logical coords (the poly shader divides by u_vp). Strokes
+// become a quad per segment plus a disc at every vertex (round joins + caps);
+// fills are a triangle fan; points are discs. No SDF/AA — thin strokes read
+// crisp, and the disc joins hide bevel gaps.
+
+// One solid vertex: pos2 + color4.
+static void pv(vv_App *a, float x, float y, vv_Color c) {
+    vpush(a, 6);
+    float *o = a->verts + a->vcount;
+    o[0] = x; o[1] = y; o[2] = c.r; o[3] = c.g; o[4] = c.b; o[5] = c.a;
+    a->vcount += 6;
+}
+static void ptri(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, vv_Vec2 p2, vv_Color c) {
+    pv(a, p0.x, p0.y, c); pv(a, p1.x, p1.y, c); pv(a, p2.x, p2.y, c);
+}
+static void pdisc(vv_App *a, vv_Vec2 ctr, float r, vv_Color c) {
+    if (r <= 0.0f) return;
+    const int SEG = 12;
+    for (int i = 0; i < SEG; i++) {
+        float a0 = (float)i / SEG * 6.2831853f, a1 = (float)(i + 1) / SEG * 6.2831853f;
+        ptri(a, ctr,
+             vv_v2(ctr.x + cosf(a0) * r, ctr.y + sinf(a0) * r),
+             vv_v2(ctr.x + cosf(a1) * r, ctr.y + sinf(a1) * r), c);
+    }
+}
+static void pseg(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, float hw, vv_Color c) {
+    float dx = p1.x - p0.x, dy = p1.y - p0.y;
+    float len = sqrtf(dx * dx + dy * dy);
+    if (len < 1e-4f) return;
+    float nx = -dy / len * hw, ny = dx / len * hw; // perpendicular * half-width
+    vv_Vec2 q0 = {p0.x + nx, p0.y + ny}, q1 = {p1.x + nx, p1.y + ny};
+    vv_Vec2 q2 = {p1.x - nx, p1.y - ny}, q3 = {p0.x - nx, p0.y - ny};
+    ptri(a, q0, q1, q2, c); ptri(a, q0, q2, q3, c);
+}
+
+static void draw_polys(void *ctx, const vv_CmdPoly *polys, int n) {
+    vv_App *a = ctx;
+    a->vcount = 0;
+    for (int i = 0; i < n; i++) {
+        const vv_CmdPoly *p = &polys[i];
+        if (p->count == 0) continue;
+        vv_Vec2 o = p->origin;
+        vv_Color col = p->color;
+        if (p->flags & VV_POLY_POINTS) {
+            float r = p->width * 0.5f;
+            for (uint32_t k = 0; k < p->count; k++)
+                pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), r, col);
+        } else if (p->flags & VV_POLY_FILL) {
+            for (uint32_t k = 1; k + 1 < p->count; k++)
+                ptri(a, vv_v2(o.x + p->pts[0].x, o.y + p->pts[0].y),
+                        vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y),
+                        vv_v2(o.x + p->pts[k + 1].x, o.y + p->pts[k + 1].y), col);
+        } else {
+            float hw = fmaxf(p->width, 0.5f) * 0.5f;
+            uint32_t segs = (p->flags & VV_POLY_CLOSED) ? p->count : p->count - 1;
+            for (uint32_t k = 0; k < segs; k++) {
+                vv_Vec2 aP = {o.x + p->pts[k].x, o.y + p->pts[k].y};
+                vv_Vec2 bP = {o.x + p->pts[(k + 1) % p->count].x,
+                              o.y + p->pts[(k + 1) % p->count].y};
+                pseg(a, aP, bP, hw, col);
+            }
+            // Round joins + caps: a disc at every vertex (skip for hairlines).
+            if (hw > 0.75f)
+                for (uint32_t k = 0; k < p->count; k++)
+                    pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), hw, col);
+        }
+    }
+    if (a->vcount == 0) return;
+
+    glUseProgram(a->poly_prog);
+    glUniform2f(a->poly_u_vp, (float)a->fb_w / a->dpi, (float)a->fb_h / a->dpi);
+    glBindVertexArray(a->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, a->vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(a->vcount * sizeof(float)), a->verts, GL_STREAM_DRAW);
+    GLsizei stride = 6 * sizeof(float);
+    for (int i = 0; i < 2; i++) glEnableVertexAttribArray((GLuint)i);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (void*)0);
+    glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, stride, (void*)(2*sizeof(float)));
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(a->vcount / 6));
+}
+
 static void push_scissor(void *ctx, vv_Rect r) {
     vv_App *a = ctx;
     if (a->scissor_top < MAX_SCISSORS) a->scissors[a->scissor_top++] = r;
@@ -526,9 +625,11 @@ vv_App *vv_app_create(const char *title, int w, int h) {
 
     a->rect_prog = link_prog(RECT_VS, RECT_FS);
     a->text_prog = link_prog(TEXT_VS, TEXT_FS);
+    a->poly_prog = link_prog(POLY_VS, POLY_FS);
     a->rect_u_vp = glGetUniformLocation(a->rect_prog, "u_vp");
     a->text_u_vp = glGetUniformLocation(a->text_prog, "u_vp");
     a->text_u_tex = glGetUniformLocation(a->text_prog, "u_tex");
+    a->poly_u_vp = glGetUniformLocation(a->poly_prog, "u_vp");
 
     glGenVertexArrays(1, &a->vao);
     glGenBuffers(1, &a->vbo);
@@ -539,6 +640,7 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     a->backend = (vv_Backend){
         .ctx = a,
         .draw_rects = draw_rects, .draw_text = draw_text,
+        .draw_polys = draw_polys,
         .push_scissor = push_scissor, .pop_scissor = pop_scissor,
         .clipboard_get = clip_get, .clipboard_set = clip_set,
         .measure_text = vv_app_measure,
@@ -568,8 +670,9 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
 
     // Inherit the shared GL objects (valid across the shared context).
     a->rect_prog = parent->rect_prog; a->text_prog = parent->text_prog;
+    a->poly_prog = parent->poly_prog;
     a->rect_u_vp = parent->rect_u_vp; a->text_u_vp = parent->text_u_vp;
-    a->text_u_tex = parent->text_u_tex;
+    a->text_u_tex = parent->text_u_tex; a->poly_u_vp = parent->poly_u_vp;
     a->fs = parent->fs;   // shared atlas + glyph cache + fonts (GL objects shared)
     a->owns_fs = false;
     a->shares_gl = true;
@@ -584,6 +687,7 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
     a->backend = (vv_Backend){
         .ctx = a,
         .draw_rects = draw_rects, .draw_text = draw_text,
+        .draw_polys = draw_polys,
         .push_scissor = push_scissor, .pop_scissor = pop_scissor,
         .clipboard_get = clip_get, .clipboard_set = clip_set,
         .measure_text = vv_app_measure,

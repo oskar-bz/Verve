@@ -16,7 +16,26 @@ typedef enum {
     VV_CMD_TRANSFORM_PUSH,
     VV_CMD_TRANSFORM_POP,
     VV_CMD_CUSTOM,
+    VV_CMD_POLY,
 } vv_CmdKind;
+
+// Vector geometry — a stroked polyline or filled polygon, the primitive the
+// visualizer widgets (plot / xy_pad / curve_editor) lower to (§14.5). Points
+// are in window space, allocated in the frame arena (like text). The backend
+// expands strokes to triangles; fills are triangle-fanned.
+enum {
+    VV_POLY_CLOSED = 1u << 0,  // stroke connects last point back to first
+    VV_POLY_FILL   = 1u << 1,  // triangle-fan the points instead of stroking
+    VV_POLY_POINTS = 1u << 2,  // draw a disc (radius = width/2) at each point
+};
+typedef struct {
+    const vv_Vec2 *pts;    // node-LOCAL coords (frame arena); add `origin`
+    uint32_t       count;
+    vv_Vec2        origin;  // window-space offset added to every point
+    float          width;  // stroke width in logical px; ignored when filled
+    vv_Color       color;
+    uint8_t        flags;  // VV_POLY_CLOSED | VV_POLY_FILL | VV_POLY_POINTS
+} vv_CmdPoly;
 
 // Bundles fill+border+shadow so the SDF shader can draw it in one instance (§9.1).
 typedef struct {
@@ -60,6 +79,7 @@ typedef struct {
         vv_Rect      scissor;
         vv_Mat23     xform;
         vv_CmdCustom custom;
+        vv_CmdPoly   poly;
     } as;
 } vv_Command;
 

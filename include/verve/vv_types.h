@@ -72,6 +72,17 @@ static inline float vv_clampf(float x, float lo, float hi) {
 }
 static inline float vv_lerpf(float a, float b, float t) { return a + (b - a) * t; }
 
+// Map x from [in_lo, in_hi] onto [out_lo, out_hi] (no clamping). Guards a
+// zero-width input range by returning out_lo — the natural "no information" fallback.
+static inline float vv_remapf(float x, float in_lo, float in_hi, float out_lo, float out_hi) {
+    float d = in_hi - in_lo;
+    return d == 0.0f ? out_lo : out_lo + (out_hi - out_lo) * ((x - in_lo) / d);
+}
+
+static inline vv_Vec2 vv_v2add(vv_Vec2 a, vv_Vec2 b)   { return (vv_Vec2){a.x + b.x, a.y + b.y}; }
+static inline vv_Vec2 vv_v2sub(vv_Vec2 a, vv_Vec2 b)   { return (vv_Vec2){a.x - b.x, a.y - b.y}; }
+static inline vv_Vec2 vv_v2scale(vv_Vec2 a, float s)   { return (vv_Vec2){a.x * s, a.y * s}; }
+
 static inline bool vv_rect_contains(vv_Rect r, vv_Vec2 p) {
     return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
 }

@@ -1,5 +1,6 @@
 #include "verve/vv_color.h"
 #include "verve/vv_context.h"
+#include "verve/vv_draw.h"
 #include "verve/vv_internal.h"
 
 #include <math.h>
@@ -184,6 +185,27 @@ static vv_Command *push_cmd(vv_Ctx *ctx) {
 
 static vv_Color with_alpha(vv_Color c, float a) { c.a *= a; return c; }
 
+// Lower a node's vector draw-list (§14.5) to VV_CMD_POLY commands. Points stay
+// in their build-time frame-arena arrays (LOCAL space); the command carries the
+// node's on-screen origin so the backend translates without us reallocating —
+// important on present-only frames, which don't reset the frame arena.
+static void emit_draw_list(vv_Ctx *ctx, vv_Node *n, vv_Rect r, float opacity) {
+    if (!n->draw) return;
+    for (const vv_Poly *p = n->draw->head; p; p = p->next) {
+        if (p->count == 0) continue;
+        vv_Command *cmd = push_cmd(ctx);
+        cmd->kind = VV_CMD_POLY;
+        cmd->as.poly = (vv_CmdPoly){
+            .pts    = p->pts,
+            .count  = p->count,
+            .origin = vv_v2(r.x, r.y),
+            .width  = p->width,
+            .color  = with_alpha(p->color, opacity),
+            .flags  = p->flags,
+        };
+    }
+}
+
 static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
     vv_StyleAnim *A = &n->actual;
 
@@ -232,11 +254,15 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
     }
 
     vv_Color bg = color_read(A->bg);
-    // Skip fully-transparent fills with no border/shadow (the common leaf).
+    // Skip fully-transparent fills with no border/shadow (the common leaf) —
+    // but a draw-list still paints its vector content on top of the (absent) fill.
     bool has_border = (A->border_width[0].x + A->border_width[1].x +
                        A->border_width[2].x + A->border_width[3].x) > 0.01f;
     bool has_shadow = n->target.shadow.color.a > 0.001f;
-    if (bg.a * opacity < 0.001f && !has_border && !has_shadow) return;
+    if (bg.a * opacity < 0.001f && !has_border && !has_shadow) {
+        emit_draw_list(ctx, n, r, opacity);
+        return;
+    }
 
     vv_Command *cmd = push_cmd(ctx);
     cmd->kind = VV_CMD_RECT;
@@ -256,6 +282,9 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
             .inset  = n->target.shadow.inset,
         },
     };
+
+    // Vector content (§14.5) paints on top of the fill/border.
+    emit_draw_list(ctx, n, r, opacity);
 }
 
 // Overlay scrollbar thumbs for a scroll container, painted on top of its
