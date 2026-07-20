@@ -46,6 +46,7 @@ enum { NFIELDS = (int)(sizeof FIELDS / sizeof FIELDS[0]) };
 
 typedef struct {
   vv_Theme theme;
+  unsigned theme_rev;   // bumped on every theme edit; drives child-preview rebuilds
   int      editing;     // field index whose popover is open, -1 = none
   bool     pop_open;
   uint32_t row_id[NFIELDS]; // captured in view, anchors popover + tooltips
@@ -98,6 +99,7 @@ static void load_theme(void *ud, const char *path) {
   }
   fclose(f);
   snprintf(a->status, sizeof a->status, "Loaded %s (%d colours)", path, lines);
+  a->theme_rev++;
 done:
   if (a->ctx) vv_invalidate(a->ctx);
 }
@@ -122,6 +124,12 @@ static void update(void *st, vv_Event ev) {
   case MSG_PV_CHECK:  a->pv_check = ev.data.as_int; break;
   case MSG_PV_TOGGLE: a->pv_toggle = ev.data.as_int; break;
   case MSG_PV_SLIDER: a->pv_slider = (float)ev.data.as_float; break;
+  }
+  // Any theme mutation bumps the revision so detached previews rebuild.
+  switch (ev.msg) {
+  case MSG_R: case MSG_G: case MSG_B:
+  case MSG_RADIUS: case MSG_FONT: case MSG_RESET: a->theme_rev++; break;
+  default: break;
   }
 }
 
@@ -312,7 +320,7 @@ static void view_detached(vv_Ctx *c, void *st) {
   preview(c, a);
 }
 
-typedef struct { vv_App *app; vv_Ctx ctx; bool used; } Child;
+typedef struct { vv_App *app; vv_Ctx ctx; bool used; unsigned seen_rev; } Child;
 
 int main(void) {
   vv_App *app = vv_app_create("Verve \xc2\xb7 Theme Editor", 1000, 660);
@@ -323,6 +331,7 @@ int main(void) {
 
   vv_Ctx ctx; vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
+  vv_set_idle_mode(&ctx, true); // sleep when settled; springs keep us awake
   vv_app_bind_clipboard(app, &ctx);
 
   static App state;
@@ -336,6 +345,7 @@ int main(void) {
   Child children[2] = {0};
 
   while (vv_app_pump_all() > 0) {
+    bool drew = false; // any window that renders keeps us off the event-wait
     static uint64_t prev; if (!prev) prev = SDL_GetPerformanceCounter();
     uint64_t now = SDL_GetPerformanceCounter();
     float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency(); prev = now;
@@ -347,6 +357,7 @@ int main(void) {
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, vv_app_input(app), update, view, &state);
     vv_app_set_cursor(app, vv_cursor(&ctx));
     if (cmds) {
+      drew = true;
       vv_app_frame_begin(app, vv_rgb(0.07f, 0.08f, 0.10f));
       vv_render(vv_app_backend(app), cmds, w, h, dpi);
       vv_app_frame_end(app);
@@ -360,6 +371,8 @@ int main(void) {
         if (!children[i].app) break;
         vv_init(&children[i].ctx);
         vv_set_measure_fn(&children[i].ctx, vv_app_measure, children[i].app);
+        vv_set_idle_mode(&children[i].ctx, true);
+        children[i].seen_rev = state.theme_rev;
         children[i].used = true;
         break;
       }
@@ -370,16 +383,31 @@ int main(void) {
         vv_shutdown(&children[i].ctx); vv_app_destroy(children[i].app);
         children[i].used = false; continue;
       }
+      // A theme edit in the main window mutates shared state the child reads,
+      // but the child gets no input of its own — so idle mode would keep it
+      // parked on a stale build. Force a rebuild when the palette moved.
+      if (children[i].seen_rev != state.theme_rev) {
+        vv_invalidate(&children[i].ctx);
+        children[i].seen_rev = state.theme_rev;
+      }
       int cw, ch; float cdpi; vv_app_size(children[i].app, &cw, &ch, &cdpi);
       vv_set_window(&children[i].ctx, (float)cw, (float)ch, cdpi);
       vv_CommandBuffer *cc = vv_run_frame(&children[i].ctx, dt, vv_app_input(children[i].app),
                                           update, view_detached, &state);
       if (cc) {
+        drew = true;
         vv_app_frame_begin(children[i].app, vv_rgb(0.07f, 0.08f, 0.10f));
         vv_render(vv_app_backend(children[i].app), cc, cw, ch, cdpi);
         vv_app_frame_end(children[i].app);
       }
     }
+
+    // Everything settled and idle: block for the next event instead of
+    // busy-spinning. A window with springs still in flight returns a command
+    // buffer (drew==true), so animations — including resize/maximize FLIP and
+    // the enter transition on first open — keep ticking without needing stray
+    // mouse motion to wake the loop.
+    if (!drew) vv_app_wait_event(app, 16);
   }
 
   for (int i = 0; i < 2; i++)
