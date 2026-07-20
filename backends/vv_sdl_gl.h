@@ -59,6 +59,11 @@ void        vv_app_size(vv_App *app, int *w, int *h, float *dpi_scale);
 // Load a TTF font from disk. The first font loaded is vv_FontID 0 (the default).
 vv_FontID   vv_app_load_font(vv_App *app, const char *path);
 
+// Upload RGBA8 pixels (row-major, w*h*4 bytes) and return a texture id to put in
+// a vv_ImageRef for vv_image(). Destroy with vv_app_texture_destroy.
+vv_TexID    vv_app_texture_from_rgba(vv_App *app, const void *rgba, int w, int h);
+void        vv_app_texture_destroy(vv_App *app, vv_TexID tex);
+
 // Clear the framebuffer and prepare for a frame's vv_render call.
 void        vv_app_frame_begin(vv_App *app, vv_Color clear);
 void        vv_app_frame_end(vv_App *app);  // swap buffers

@@ -62,6 +62,9 @@ typedef struct vv_Node {
     // attached by the vv_draw_* builders. Present lowers each to a VV_CMD_POLY.
     const struct vv_DrawList *draw;
 
+    // Image leaf: when set, present emits a VV_CMD_IMAGE over the node's rect.
+    const vv_ImageRef *image;
+
     // Text leaves stash their frame-arena string copy here (separate from
     // widget_state, which the freelist allocator owns).
     const char *text;

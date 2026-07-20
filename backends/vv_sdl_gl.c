@@ -57,9 +57,9 @@ struct vv_App {
     SDL_WindowID  win_id;   // for routing events in the multi-window pump
     vv_Backend    backend;
 
-    GLuint rect_prog, text_prog, poly_prog;
+    GLuint rect_prog, text_prog, poly_prog, image_prog;
     GLuint vao, vbo;
-    GLint  rect_u_vp, text_u_vp, text_u_tex, poly_u_vp;
+    GLint  rect_u_vp, text_u_vp, text_u_tex, poly_u_vp, image_u_vp, image_u_tex;
 
     FontSystem *fs;         // shared with GL-sharing children
     bool   owns_fs;         // root window frees it
@@ -188,6 +188,14 @@ static const char *TEXT_FS =
     "in vec2 v_uv; in vec4 v_color; out vec4 frag;\n"
     "uniform sampler2D u_tex;\n"
     "void main(){ float a=texture(u_tex,v_uv).r; frag=vec4(v_color.rgb, v_color.a*a); }\n";
+
+// Textured quads (VV_CMD_IMAGE): same vertex layout as text (pos2+uv2+color4),
+// but samples full RGBA and multiplies by the tint.
+static const char *IMAGE_FS =
+    "#version 330 core\n"
+    "in vec2 v_uv; in vec4 v_color; out vec4 frag;\n"
+    "uniform sampler2D u_tex;\n"
+    "void main(){ frag = texture(u_tex, v_uv) * v_color; }\n";
 
 // Solid triangles — the vector primitive (VV_CMD_POLY). Same logical->NDC map
 // as the rect/text shaders; colour comes per-vertex, no SDF.
@@ -613,6 +621,67 @@ static void draw_polys(void *ctx, const vv_CmdPoly *polys, int n) {
     glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(a->vcount / 6));
 }
 
+// ---- images (VV_CMD_IMAGE) ------------------------------------------------
+static vv_TexID backend_tex_create(void *ctx, const void *px, int w, int h, vv_PixFmt fmt) {
+    (void)ctx;
+    GLuint tex; glGenTextures(1, &tex);
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (fmt == VV_PIXFMT_A8)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, px);
+    else
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    return (vv_TexID)tex;
+}
+static void backend_tex_destroy(void *ctx, vv_TexID t) {
+    (void)ctx; GLuint g = (GLuint)t; glDeleteTextures(1, &g);
+}
+static void draw_image(void *ctx, const vv_CmdImage *imgs, int n) {
+    vv_App *a = ctx;
+    for (int i = 0; i < n; i++) {
+        const vv_CmdImage *im = &imgs[i];
+        vv_Rect r = im->rect, uv = im->uv;
+        if (uv.w == 0 && uv.h == 0) uv = (vv_Rect){0, 0, 1, 1};
+        vv_Color c = im->tint.a > 0 ? im->tint : (vv_Color){1, 1, 1, 1};
+        float v[6][8] = {
+            {r.x,       r.y,       uv.x,        uv.y,        c.r, c.g, c.b, c.a},
+            {r.x + r.w, r.y,       uv.x + uv.w, uv.y,        c.r, c.g, c.b, c.a},
+            {r.x + r.w, r.y + r.h, uv.x + uv.w, uv.y + uv.h, c.r, c.g, c.b, c.a},
+            {r.x,       r.y,       uv.x,        uv.y,        c.r, c.g, c.b, c.a},
+            {r.x + r.w, r.y + r.h, uv.x + uv.w, uv.y + uv.h, c.r, c.g, c.b, c.a},
+            {r.x,       r.y + r.h, uv.x,        uv.y + uv.h, c.r, c.g, c.b, c.a},
+        };
+        a->vcount = 0; vpush(a, 6 * 8);
+        memcpy(a->verts + a->vcount, v, sizeof v); a->vcount += 6 * 8;
+
+        glUseProgram(a->image_prog);
+        glUniform2f(a->image_u_vp, (float)a->fb_w / a->dpi, (float)a->fb_h / a->dpi);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)im->tex);
+        glUniform1i(a->image_u_tex, 0);
+        glBindVertexArray(a->vao);
+        glBindBuffer(GL_ARRAY_BUFFER, a->vbo);
+        glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(a->vcount * sizeof(float)), a->verts, GL_STREAM_DRAW);
+        GLsizei stride = 8 * sizeof(float);
+        for (int k = 0; k < 3; k++) glEnableVertexAttribArray((GLuint)k);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, stride, (void*)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, stride, (void*)(2*sizeof(float)));
+        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, stride, (void*)(4*sizeof(float)));
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+}
+
+// Public: upload RGBA8 pixels and return a texture id usable in a vv_ImageRef.
+vv_TexID vv_app_texture_from_rgba(vv_App *a, const void *rgba, int w, int h) {
+    SDL_GL_MakeCurrent(a->win, a->gl);
+    return backend_tex_create(a, rgba, w, h, VV_PIXFMT_RGBA8);
+}
+void vv_app_texture_destroy(vv_App *a, vv_TexID t) { backend_tex_destroy(a, t); }
+
 static void push_scissor(void *ctx, vv_Rect r) {
     vv_App *a = ctx;
     if (a->scissor_top < MAX_SCISSORS) a->scissors[a->scissor_top++] = r;
@@ -651,10 +720,13 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     a->rect_prog = link_prog(RECT_VS, RECT_FS);
     a->text_prog = link_prog(TEXT_VS, TEXT_FS);
     a->poly_prog = link_prog(POLY_VS, POLY_FS);
+    a->image_prog = link_prog(TEXT_VS, IMAGE_FS); // same vertex layout as text
     a->rect_u_vp = glGetUniformLocation(a->rect_prog, "u_vp");
     a->text_u_vp = glGetUniformLocation(a->text_prog, "u_vp");
     a->text_u_tex = glGetUniformLocation(a->text_prog, "u_tex");
     a->poly_u_vp = glGetUniformLocation(a->poly_prog, "u_vp");
+    a->image_u_vp = glGetUniformLocation(a->image_prog, "u_vp");
+    a->image_u_tex = glGetUniformLocation(a->image_prog, "u_tex");
 
     glGenVertexArrays(1, &a->vao);
     glGenBuffers(1, &a->vbo);
@@ -665,7 +737,8 @@ vv_App *vv_app_create(const char *title, int w, int h) {
     a->backend = (vv_Backend){
         .ctx = a,
         .draw_rects = draw_rects, .draw_text = draw_text,
-        .draw_polys = draw_polys,
+        .draw_polys = draw_polys, .draw_image = draw_image,
+        .texture_create = backend_tex_create, .texture_destroy = backend_tex_destroy,
         .push_scissor = push_scissor, .pop_scissor = pop_scissor,
         .clipboard_get = clip_get, .clipboard_set = clip_set,
         .measure_text = vv_app_measure,
@@ -695,9 +768,10 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
 
     // Inherit the shared GL objects (valid across the shared context).
     a->rect_prog = parent->rect_prog; a->text_prog = parent->text_prog;
-    a->poly_prog = parent->poly_prog;
+    a->poly_prog = parent->poly_prog; a->image_prog = parent->image_prog;
     a->rect_u_vp = parent->rect_u_vp; a->text_u_vp = parent->text_u_vp;
     a->text_u_tex = parent->text_u_tex; a->poly_u_vp = parent->poly_u_vp;
+    a->image_u_vp = parent->image_u_vp; a->image_u_tex = parent->image_u_tex;
     a->fs = parent->fs;   // shared atlas + glyph cache + fonts (GL objects shared)
     a->owns_fs = false;
     a->shares_gl = true;
@@ -712,7 +786,8 @@ vv_App *vv_app_open_child(vv_App *parent, const char *title, int w, int h) {
     a->backend = (vv_Backend){
         .ctx = a,
         .draw_rects = draw_rects, .draw_text = draw_text,
-        .draw_polys = draw_polys,
+        .draw_polys = draw_polys, .draw_image = draw_image,
+        .texture_create = backend_tex_create, .texture_destroy = backend_tex_destroy,
         .push_scissor = push_scissor, .pop_scissor = pop_scissor,
         .clipboard_get = clip_get, .clipboard_set = clip_set,
         .measure_text = vv_app_measure,

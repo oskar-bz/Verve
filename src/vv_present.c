@@ -238,6 +238,16 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
         return;
     }
 
+    // Image leaf (§14.5): a textured quad filling the node's rect.
+    if (n->image) {
+        vv_Command *cmd = push_cmd(ctx);
+        cmd->kind = VV_CMD_IMAGE;
+        vv_Color tint = n->image->tint.a > 0.0f ? n->image->tint : vv_rgb(1, 1, 1);
+        cmd->as.image = (vv_CmdImage){ .rect = r, .tex = n->image->tex,
+                                       .uv = n->image->uv, .tint = with_alpha(tint, opacity) };
+        return;
+    }
+
     if (n->flags & VV_FLAG_TEXT) {
         vv_Command *cmd = push_cmd(ctx);
         cmd->kind = VV_CMD_TEXT;

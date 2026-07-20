@@ -51,6 +51,10 @@ typedef enum {
 // its own state afterward. `ud` is the app's data. See vv_custom().
 typedef struct { void (*fn)(void *ud, vv_Rect rect); void *ud; } vv_CustomDraw;
 
+// An image reference a node can carry (§14.5): texture + source region + tint.
+// Present emits a VV_CMD_IMAGE filling the node's rect. See vv_image().
+typedef struct { vv_TexID tex; vv_Rect uv; vv_Color tint; } vv_ImageRef;
+
 // ---- constructors (terse, designed for call-site use) --------------------
 
 static inline vv_Vec2  vv_v2(float x, float y)            { return (vv_Vec2){x, y}; }

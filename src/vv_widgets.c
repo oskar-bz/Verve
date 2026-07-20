@@ -1861,6 +1861,81 @@ void vv_context_menu_end(vv_Ctx *ctx) {
   g_ctxmenu_open = NULL;
 }
 
+// ---- rich text ------------------------------------------------------------
+// A wrapping row of per-word text nodes, each carrying its span's colour/size.
+// The layout engine's word-level flow is reused by making words the children.
+void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n) {
+  const vv_Theme *t = vv_theme();
+  float gap = t->font_size * 0.32f;
+  vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+               VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .wrap = true,
+                               .gap = gap, .cross = VV_ALIGN_END),
+               VV_STYLE(0));
+  for (int s = 0; s < n; s++) {
+    const char *p = spans[s].text;
+    if (!p) continue;
+    float sz = spans[s].size > 0 ? spans[s].size : t->font_size;
+    vv_Color col = (spans[s].color.a > 0.001f) ? spans[s].color : t->text;
+    while (*p) {
+      while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++; // skip ws
+      const char *w = p;
+      while (*p && *p != ' ' && *p != '\n' && *p != '\t' && *p != '\r') p++;
+      if (p > w)
+        vv_text(ctx, vv_fmt(ctx, "%.*s", (int)(p - w), w),
+                VV_STYLE(.fg = col, .font_size = sz, .font = t->font));
+    }
+  }
+  vv_end_box(ctx);
+}
+
+// ---- color_picker ---------------------------------------------------------
+typedef struct { bool open; } PickerState;
+
+uint32_t vv_color_picker(vv_Ctx *ctx, const char *key, vv_Color value,
+                         vv_Msg change) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             VV_LAYOUT(.w = vv_fixed(52), .h = vv_fixed(28),
+                                             .focusable = true, .cursor = VV_CURSOR_POINTER),
+                             VV_STYLE(.bg = value, .radius = vv_r(t->radius),
+                                        .border_width = vv_all(t->border_width),
+                                        .border_color = t->border));
+  vv_end_box(ctx);
+  PickerState *st = vv_state(ctx, id, PickerState);
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) st->open = !st->open;
+
+  if (st->open) {
+    vv_Rect r = vv_node(ctx, id)->actual_rect;
+    vv_popover_open(ctx, "__cpick", vv_v2(r.x, r.y + r.h + 4), 220, &st->open);
+    vv_Color c = value;
+    const char *labels[3] = {"R", "G", "B"};
+    float *chan[3] = {&c.r, &c.g, &c.b};
+    const char *keys[3] = {"cr", "cg", "cb"};
+    bool any = false;
+    for (int i = 0; i < 3; i++) {
+      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8),
+             VV_STYLE(.bg = {0})) {
+        vv_text(ctx, labels[i], VV_STYLE(.fg = t->text, .font_size = t->font_size));
+        SliderResult sr = slider_core(ctx, keys[i], *chan[i], 0.0f, 1.0f, NULL);
+        if (sr.changed) { *chan[i] = sr.value; any = true; }
+      }
+    }
+    if (any) vv_emit(ctx, change, vv_pcolor(c));
+    vv_popover_end(ctx);
+  }
+  return id;
+}
+
+// ---- image ----------------------------------------------------------------
+uint32_t vv_image(vv_Ctx *ctx, const char *key, const vv_ImageRef *img,
+                  vv_Size w, vv_Size h) {
+  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                             VV_LAYOUT(.w = w, .h = h), VV_STYLE(0));
+  vv_node(ctx, id)->image = img;
+  vv_end_box(ctx);
+  return id;
+}
+
 // ==========================================================================
 // Visualizer widgets (§14.5). These lean on the vv_draw_* canvas (vv_draw.h)
 // for vector content and otherwise follow the slider pattern: read the node's

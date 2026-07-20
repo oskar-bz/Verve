@@ -134,6 +134,42 @@ static inline const vv_CurveEdit *vv_as_curve_edit(vv_Payload p) {
     return (const vv_CurveEdit *)p.as_ptr;
 }
 
+// Rich text: a paragraph of styled inline runs that wrap together at word
+// boundaries. Each span carries its own colour and size (represent bold/code/
+// links via colour + size, since the atlas is a single face). Newlines inside a
+// span are treated as spaces — build separate rich_text blocks for hard breaks.
+typedef struct {
+    const char *text;
+    vv_Color    color;
+    float       size;   // 0 => theme font size
+} vv_Span;
+void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n);
+
+// An image leaf sized by `w`/`h`. `img` must outlive the frame (app-persistent);
+// present emits a textured quad over the node's rect. Load a texture with the
+// backend's vv_app_texture_from_rgba.
+uint32_t vv_image(vv_Ctx *ctx, const char *key, const vv_ImageRef *img,
+                  vv_Size w, vv_Size h);
+
+// A colour picker: a swatch button that opens an R/G/B slider popover. Manages
+// its own open state; emits `change` with the new colour packed via vv_pcolor
+// (read back with vv_as_color) whenever a channel moves.
+uint32_t vv_color_picker(vv_Ctx *ctx, const char *key, vv_Color value,
+                         vv_Msg change);
+// Colour <-> payload packing (rgba8 in a 64-bit int; alpha forced opaque here).
+static inline vv_Payload vv_pcolor(vv_Color c) {
+    uint32_t r = (uint32_t)(vv_clampf(c.r, 0, 1) * 255.0f + 0.5f);
+    uint32_t g = (uint32_t)(vv_clampf(c.g, 0, 1) * 255.0f + 0.5f);
+    uint32_t b = (uint32_t)(vv_clampf(c.b, 0, 1) * 255.0f + 0.5f);
+    return (vv_Payload){ .as_int = (int64_t)((r << 16) | (g << 8) | b) };
+}
+static inline vv_Color vv_as_color(vv_Payload p) {
+    uint64_t v = (uint64_t)p.as_int;
+    return vv_rgb((float)((v >> 16) & 0xff) / 255.0f,
+                  (float)((v >> 8) & 0xff) / 255.0f,
+                  (float)(v & 0xff) / 255.0f);
+}
+
 // A tree row indented by `depth`, with a disclosure caret when not a `leaf`.
 // Returns true when the row is clicked — the app toggles `expanded` (folders) or
 // selects (leaves). The app owns the hierarchy and recursion.
