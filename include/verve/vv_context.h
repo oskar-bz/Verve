@@ -60,6 +60,7 @@ typedef struct vv_Ctx {
     vv_Input input;
     float    win_w, win_h, dpi_scale;
     float    animation_scale;   // §18 kill switch; 1.0 normal, 0.0 = snap
+    vv_SpringParams default_spring; // fallback spring feel for nodes without an override
 
     // Backend text measurement, used during layout (§8.1, §15). NULL => the
     // built-in monospace estimate stands in.
@@ -165,6 +166,9 @@ void        vv_clipboard_set(vv_Ctx *ctx, const char *s);
 vv_CursorShape vv_cursor(const vv_Ctx *ctx);
 void vv_set_idle_mode(vv_Ctx *ctx, bool on);
 void vv_set_animation_scale(vv_Ctx *ctx, float scale);
+// Default spring feel (response seconds, damping) for every node that doesn't
+// set vv_Style.spring itself. Lets an app tune global motion at runtime.
+void vv_set_default_spring(vv_Ctx *ctx, vv_SpringParams params);
 void vv_invalidate(vv_Ctx *ctx);
 
 void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input);

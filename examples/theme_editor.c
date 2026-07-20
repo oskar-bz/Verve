@@ -31,6 +31,7 @@ enum {
   MSG_RESET, MSG_OPEN, MSG_SAVE, MSG_DETACH,
   MSG_PRESET,
   MSG_PV_TEXT, MSG_PV_CHECK, MSG_PV_TOGGLE, MSG_PV_SLIDER,
+  MSG_ANIM_RESP, MSG_ANIM_DAMP, MSG_ANIM_SPEED,
   // One message per scalar metric, in vv_theme_metrics order.
   MSG_METRIC0,
 };
@@ -48,6 +49,7 @@ static const char *g_preset_names[16];
 
 typedef struct {
   vv_Theme theme;
+  float    anim_response, anim_damping, anim_speed; // global motion feel (§6.1)
   int      preset;      // index into vv_theme_presets shown in the picker
   unsigned theme_rev;   // bumped on every theme edit; drives child-preview rebuilds
   int      editing;     // field index whose popover is open, -1 = none
@@ -123,6 +125,9 @@ static void update(void *st, vv_Event ev) {
     }
   } break;
   case MSG_DETACH: a->want_detach++; break;
+  case MSG_ANIM_RESP:  a->anim_response = (float)ev.data.as_float; break;
+  case MSG_ANIM_DAMP:  a->anim_damping  = (float)ev.data.as_float; break;
+  case MSG_ANIM_SPEED: a->anim_speed    = (float)ev.data.as_float; break;
   case MSG_PV_TEXT:   break; // text_field edits pv_text in place
   case MSG_PV_CHECK:  a->pv_check = ev.data.as_int; break;
   case MSG_PV_TOGGLE: a->pv_toggle = ev.data.as_int; break;
@@ -231,6 +236,8 @@ static void channel(vv_Ctx *c, App *a, int ci, const char *label, vv_Color lc,
 static void view(vv_Ctx *c, void *st) {
   App *a = st;
   vv_set_theme(&a->theme);          // the whole UI springs to the edited palette
+  vv_set_default_spring(c, (vv_SpringParams){a->anim_response, a->anim_damping});
+  vv_set_animation_scale(c, a->anim_speed);
   const vv_Theme *t = vv_theme();
   uint32_t m_file = 0, m_win = 0;
 
@@ -272,6 +279,25 @@ static void view(vv_Ctx *c, void *st) {
                       m->lo, m->hi, METRIC_MSG(i));
           }
         }
+
+        // Animation: the global spring feel (§6.1) + motion-speed kill switch.
+        vv_text(c, "Animation", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+        struct { const char *name; float val, lo, hi; vv_Msg msg; } anim[] = {
+          {"response", a->anim_response, 0.05f, 0.6f, MSG_ANIM_RESP},
+          {"damping",  a->anim_damping,  0.4f,  1.2f, MSG_ANIM_DAMP},
+          {"speed",    a->anim_speed,    0.0f,  2.0f, MSG_ANIM_SPEED},
+        };
+        for (int i = 0; i < 3; i++) {
+          VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 10),
+                 VV_STYLE(.bg = {0})) {
+            VV_BOX(c, VV_LAYOUT(.w = vv_fixed(96)), VV_STYLE(.bg = {0})) {
+              vv_text(c, vv_fmt(c, "%s %.2f", anim[i].name, (double)anim[i].val),
+                      VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
+            }
+            vv_slider(c, vv_fmt(c, "a%d", i), anim[i].val, anim[i].lo, anim[i].hi, anim[i].msg);
+          }
+        }
+
         vv_text(c, a->status, VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
       }
 
@@ -351,6 +377,7 @@ int main(void) {
   static App state;
   state.theme = vv_theme_dark();
   state.editing = -1;
+  state.anim_response = 0.25f; state.anim_damping = 1.0f; state.anim_speed = 1.0f;
   state.pv_slider = 0.6f;
   snprintf(state.pv_text, sizeof state.pv_text, "Hello");
   snprintf(state.status, sizeof state.status, "%d colours - edit and watch it spring", NFIELDS);

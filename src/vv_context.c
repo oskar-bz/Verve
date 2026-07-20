@@ -21,6 +21,7 @@ void vv_init(vv_Ctx *ctx) {
     vv_pool_init(&ctx->pool, &ctx->persistent, 256);
 
     ctx->animation_scale = 1.0f;
+    ctx->default_spring = VV_DEFAULT_SPRING;
     ctx->dpi_scale       = 1.0f;
     ctx->win_w           = 800;
     ctx->win_h           = 600;
@@ -86,6 +87,10 @@ void *vv_ui_state_raw(vv_Ctx *ctx, const char *key, size_t size) {
 // can grab a settled frame instead of the loop going idle mid-animation.
 void vv_set_idle_mode(vv_Ctx *ctx, bool on)         { ctx->idle_mode = on && !getenv("VV_SHOT"); }
 void vv_set_animation_scale(vv_Ctx *ctx, float s)   { ctx->animation_scale = s; }
+void vv_set_default_spring(vv_Ctx *ctx, vv_SpringParams p) {
+    if (p.response <= 0.0001f) p = VV_DEFAULT_SPRING;
+    ctx->default_spring = p;
+}
 void vv_invalidate(vv_Ctx *ctx)                     { ctx->tree_dirty = true; }
 
 // ---- declarative state variants (§4.4, §7.1) -----------------------------

@@ -15,9 +15,9 @@
 // flying across (§6.5).
 #define FLIP_SNAP_FRAC 0.9f
 
-static vv_SpringParams node_params(const vv_Node *n) {
+static vv_SpringParams node_params(const vv_Ctx *ctx, const vv_Node *n) {
     if (n->target.spring.response > 0.0001f) return n->target.spring;
-    return VV_DEFAULT_SPRING;
+    return ctx->default_spring;
 }
 
 // dt after the global animation-scale kill switch (§18). <=0 => snap.
@@ -73,10 +73,9 @@ static float xform_rot(vv_Mat23 m)   { return atan2f(m.b, m.a); }
 
 // ---- style animation ------------------------------------------------------
 
-static void style_init(vv_Node *n) {
+static void style_init(vv_Node *n, vv_SpringParams p) {
     vv_StyleAnim *A = &n->actual;
     vv_Style *T = &n->target;
-    vv_SpringParams p = node_params(n);
 
     color_init(A->bg, T->bg, p);
     color_init(A->fg, T->fg, p);
@@ -333,12 +332,12 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
         return;
     }
 
-    vv_SpringParams p = node_params(n);
+    vv_SpringParams p = node_params(ctx, n);
 
     // Birth: snap actual to target, no animation on first appearance of style
     // (§3.3, §6.6). Enter spring runs 0 -> 1.
     if (!n->actual.initialized) {
-        style_init(n);
+        style_init(n, p);
         rect_init(n, p);
         vv_spring_init(&n->enter, 0.0f, p);
         vv_spring_init(&n->exit, 1.0f, VV_DEFAULT_SPRING);
