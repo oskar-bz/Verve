@@ -14,8 +14,10 @@
 #include "verve/verve.h"
 #include "vv_sdl_gl.h"
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -47,6 +49,8 @@ typedef struct {
   int      editing;     // field index whose popover is open, -1 = none
   bool     pop_open;
   uint32_t row_id[NFIELDS]; // captured in view, anchors popover + tooltips
+
+  char  ch_buf[3][8];   // 0-255 text for the R/G/B channel inputs (popover)
 
   // interactive preview state, so the preview reacts (hover/checked/etc.)
   bool  pv_check, pv_toggle;
@@ -183,6 +187,36 @@ static void color_row(vv_Ctx *c, App *a, int i) {
   if (vv_clicked(c, id)) vv_emit(c, MSG_EDIT_FIELD, vv_pi(i));
 }
 
+// One R/G/B channel: a slider and a numeric (0-255) text field that edit the
+// same value — a hybrid input. The slider streams float 0..1 via `msg`; the
+// field parses 0-255 while focused and emits the same `msg`, so either control
+// drives the colour. When the field isn't focused it mirrors the live value.
+static void channel(vv_Ctx *c, App *a, int ci, const char *label, vv_Color lc,
+                    float *val, const char *skey, const char *tkey, vv_Msg msg) {
+  const vv_Theme *t = vv_theme();
+  VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8),
+         VV_STYLE(.bg = {0})) {
+    vv_text(c, label, VV_STYLE(.fg = lc, .font_size = t->font_size));
+    vv_slider(c, skey, *val, 0, 1, msg);
+    // Numeric field (0-255). Mirror the live value while unfocused; parse the
+    // typed text and emit `msg` while focused. MSG_PV_TEXT is a no-op handler —
+    // the value flows through `msg` below, not the field's own change message.
+    uint32_t f = 0;
+    VV_BOX(c, VV_LAYOUT(.w = vv_fixed(52)), VV_STYLE(.bg = {0})) {
+      f = vv_text_field(c, tkey, a->ch_buf[ci], (int)sizeof a->ch_buf[ci], NULL,
+                        MSG_PV_TEXT);
+    }
+    if (vv_focused(c, f)) {
+      int iv = atoi(a->ch_buf[ci]);
+      iv = iv < 0 ? 0 : (iv > 255 ? 255 : iv);
+      vv_emit(c, msg, vv_pf((float)iv / 255.0f));
+    } else {
+      snprintf(a->ch_buf[ci], sizeof a->ch_buf[ci], "%d",
+               (int)lroundf(*val * 255.0f));
+    }
+  }
+}
+
 static void view(vv_Ctx *c, void *st) {
   App *a = st;
   vv_set_theme(&a->theme);          // the whole UI springs to the edited palette
@@ -260,18 +294,9 @@ static void view(vv_Ctx *c, void *st) {
                  (vv_Style){.bg = *col, .radius = vv_r(6),
                             .border_width = vv_all(1), .border_color = t->border});
     vv_end_box(c);
-    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8), VV_STYLE(.bg = {0})) {
-      vv_text(c, "R", VV_STYLE(.fg = t->danger, .font_size = t->font_size));
-      vv_slider(c, "cr", col->r, 0, 1, MSG_R);
-    }
-    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8), VV_STYLE(.bg = {0})) {
-      vv_text(c, "G", VV_STYLE(.fg = vv_rgb(0.4f, 0.85f, 0.4f), .font_size = t->font_size));
-      vv_slider(c, "cg", col->g, 0, 1, MSG_G);
-    }
-    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8), VV_STYLE(.bg = {0})) {
-      vv_text(c, "B", VV_STYLE(.fg = t->accent, .font_size = t->font_size));
-      vv_slider(c, "cb", col->b, 0, 1, MSG_B);
-    }
+    channel(c, a, 0, "R", t->danger, &col->r, "cr", "crt", MSG_R);
+    channel(c, a, 1, "G", vv_rgb(0.4f, 0.85f, 0.4f), &col->g, "cg", "cgt", MSG_G);
+    channel(c, a, 2, "B", t->accent, &col->b, "cb", "cbt", MSG_B);
     vv_popover_end(c);
   }
 
