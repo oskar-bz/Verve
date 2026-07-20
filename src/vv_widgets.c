@@ -658,8 +658,10 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
         ctx, "sel", 3,
         VV_LAYOUT(.has_absolute = true,
                         .absolute = vv_rect(lo, 6, hi - lo, 22)),
+        // Snap the rect (§6.4.1): the selection is dragged continuously, so a
+        // FLIP spring would make the highlight glide/lag behind the pointer.
         VV_STYLE(.bg = vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.35f),
-                   .radius = vv_r(3)));
+                   .radius = vv_r(3), .transition_mask = VV_INSTANT_RECT));
     vv_end_box(ctx);
   }
 
@@ -974,9 +976,10 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
               .has_absolute = true,
               // absolute is content-relative (post-padding), so no extra pad
               .absolute = vv_rect(ax, ly, bx - ax + extra, line_h)),
+          // Snap: dragged continuously, so no FLIP glide (§6.4.1).
           VV_STYLE(.bg =
                          vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.30f),
-                     .radius = vv_r(2)));
+                     .radius = vv_r(2), .transition_mask = VV_INSTANT_RECT));
       vv_end_box(ctx);
       if (le >= len)
         break;
