@@ -94,9 +94,9 @@ static void view(vv_Ctx *c, void *st) {
         panel(c, "Output  (muted = source, accent = shaped)");
         vv_PlotSeries series[2] = {
           {.ys = s->raw,    .count = NSAMP, .color = TH->text_muted,
-           .kind = VV_PLOT_LINE, .width = 1.0f},
+           .kind = VV_PLOT_LINE, .width = 1.0f, .name = "source"},
           {.ys = s->shaped, .count = NSAMP, .color = TH->accent,
-           .kind = VV_PLOT_LINE, .width = 2.5f},
+           .kind = VV_PLOT_LINE, .width = 2.5f, .name = "shaped"},
         };
         vv_plot(c, "plot", series, 2,
                 (vv_PlotOpts){.y_min = 0.0f, .y_max = 1.0f, .auto_x = true,

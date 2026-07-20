@@ -110,6 +110,7 @@ typedef struct {
     vv_Color     color;
     vv_PlotKind  kind;
     float        width;   // line width / point radius / bar inset (0 => default)
+    const char  *name;    // optional: shown in the legend
 } vv_PlotSeries;
 typedef struct {
     float x_min, x_max;   // x data range; leave 0,0 with auto_x to fit data

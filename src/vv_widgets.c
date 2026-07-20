@@ -2119,6 +2119,61 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
   vv_end_box(ctx);
 
+  // X-range labels (bottom corners).
+  vv_box_keyed(ctx, "xl0", 3, VV_LAYOUT(.has_absolute = true,
+               .absolute = vv_rect(ix, iy + ih + 1, 60, 14)), VV_STYLE(.bg = {0}));
+  vv_text(ctx, vv_fmt(ctx, "%.1f", (double)xmin),
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
+  vv_end_box(ctx);
+  vv_box_keyed(ctx, "xl1", 3, VV_LAYOUT(.has_absolute = true,
+               .absolute = vv_rect(ix + iw - 60, iy + ih + 1, 60, 14), .main = VV_ALIGN_END),
+               VV_STYLE(.bg = {0}));
+  vv_text(ctx, vv_fmt(ctx, "%.1f", (double)xmax),
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
+  vv_end_box(ctx);
+
+  // Legend: swatch + name per named series, top-right.
+  int named = 0;
+  for (int s = 0; s < n; s++) if (series[s].name) named++;
+  if (named > 0) {
+    vv_box_keyed(ctx, "leg", 3,
+                 VV_LAYOUT(.dir = VV_COLUMN, .has_absolute = true, .gap = 3, .padding = vv_all(6),
+                                 .absolute = vv_rect(ix + iw - 130, iy + 4, 126, 0)),
+                 VV_STYLE(.bg = vv_rgba(t->surface.r, t->surface.g, t->surface.b, 0.7f),
+                            .radius = vv_r(5)));
+    for (int s = 0; s < n; s++) {
+      if (!series[s].name) continue;
+      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 6), VV_STYLE(.bg = {0})) {
+        vv_box_keyed(ctx, vv_fmt(ctx, "sw%d", s), 0,
+                     VV_LAYOUT(.w = vv_fixed(12), .h = vv_fixed(3)),
+                     VV_STYLE(.bg = series[s].color, .radius = vv_r(1.5f)));
+        vv_end_box(ctx);
+        vv_text(ctx, series[s].name, VV_STYLE(.fg = t->text, .font_size = t->font_size - 4));
+      }
+    }
+    vv_end_box(ctx);
+  }
+
+  // Hover crosshair + value readout of the first series at the cursor's x.
+  if (vv_hovered(ctx, id) && n > 0 && series[0].count > 0) {
+    float mx = vv_mouse(ctx).x - nd->actual_rect.x;
+    if (mx >= ix && mx <= ix + iw) {
+      vv_draw_line(ctx, id, vv_v2(mx, iy), vv_v2(mx, iy + ih), 1.0f, t->text_muted);
+      const vv_PlotSeries *ps = &series[0];
+      float xd = vv_remapf(mx, ix, ix + iw, xmin, xmax);
+      float x0 = ps->xs ? ps->xs[0] : 0.0f;
+      float x1 = ps->xs ? ps->xs[ps->count - 1] : (float)(ps->count - 1);
+      int k = (int)(vv_remapf(xd, x0, x1, 0.0f, (float)(ps->count - 1)) + 0.5f);
+      k = k < 0 ? 0 : (k >= ps->count ? ps->count - 1 : k);
+      vv_box_keyed(ctx, "rd", 2, VV_LAYOUT(.has_absolute = true, .padding = vv_hv(6, 3),
+                   .absolute = vv_rect(vv_minf(mx + 6, ix + iw - 70), iy + 4, 66, 0)),
+                   VV_STYLE(.bg = t->accent, .radius = vv_r(4)));
+      vv_text(ctx, vv_fmt(ctx, "%.3f", (double)ps->ys[k]),
+              VV_STYLE(.fg = t->on_accent, .font_size = t->font_size - 4));
+      vv_end_box(ctx);
+    }
+  }
+
   vv_end_box(ctx);
 }
 
