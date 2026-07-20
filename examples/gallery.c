@@ -9,6 +9,7 @@
 enum {
   MSG_TAB = 1, MSG_RADIO, MSG_COMBO, MSG_STEP, MSG_TEXT,
   MSG_TREE, MSG_CTX_OPEN, MSG_CTX_CLOSE, MSG_CTX_ACT,
+  MSG_ADV, MSG_MODAL_OPEN, MSG_MODAL_CLOSE,
 };
 
 // A tiny file tree: name, depth, is-leaf, parent index.
@@ -27,6 +28,7 @@ typedef struct {
   bool   expanded[NTREE];
   bool   ctx_open;
   vv_Vec2 ctx_at;
+  bool   adv_open, modal_open;
   char   status[96];
 } App;
 
@@ -46,6 +48,9 @@ static void update(void *st, vv_Event ev) {
   case MSG_CTX_OPEN:  a->ctx_open = true; a->ctx_at = vv_as_v2(ev.data); break;
   case MSG_CTX_CLOSE: a->ctx_open = false; break;
   case MSG_CTX_ACT:   snprintf(a->status, sizeof a->status, "Context action: %s", ev.data.as_str); a->ctx_open = false; break;
+  case MSG_ADV:         a->adv_open = (bool)ev.data.as_int; break;
+  case MSG_MODAL_OPEN:  a->modal_open = true; break;
+  case MSG_MODAL_CLOSE: a->modal_open = false; break;
   case MSG_TEXT: break;
   }
 }
@@ -68,6 +73,15 @@ static void inputs_tab(vv_Ctx *c, App *a) {
 
   vv_text(c, "Text field (Ctrl-C/V/X)", VV_STYLE(.fg = t->text_muted, .font_size = 12));
   vv_text_field(c, "tf", a->text, (int)sizeof a->text, "Type, select, copy...", MSG_TEXT);
+
+  vv_text(c, "Collapsible + modal", VV_STYLE(.fg = t->text_muted, .font_size = 12));
+  if (vv_collapsible_begin(c, "adv", "Advanced options", a->adv_open, MSG_ADV)) {
+    vv_checkbox(c, "a1", "Dither output", a->radio == 1, MSG_RADIO);
+    vv_text(c, "Body FLIP-springs open and closed.",
+            VV_STYLE(.fg = t->text_muted, .font_size = 12));
+    vv_collapsible_end(c);
+  }
+  vv_button(c, "openm", "Open dialog...", MSG_MODAL_OPEN, VV_NO_PAYLOAD);
 }
 
 static void tree_tab(vv_Ctx *c, App *a) {
@@ -119,6 +133,21 @@ static void view(vv_Ctx *c, void *st) {
     vv_menu_separator(c);
     if (vv_menu_item(c, "del", "Delete", NULL))     vv_emit(c, MSG_CTX_ACT, vv_ps("Delete"));
     vv_context_menu_end(c);
+  }
+
+  // Overlay: a centered modal dialog (scrim + Escape dismiss).
+  if (a->modal_open) {
+    vv_modal_begin(c, "dlg", 320, MSG_MODAL_CLOSE);
+    vv_text(c, "Delete project?", VV_STYLE(.fg = t->text, .font_size = 18));
+    vv_text(c, "This can't be undone. The scrim or Escape dismisses.",
+            VV_STYLE(.fg = t->text_muted, .font_size = 13));
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .gap = 8,
+                        .main = VV_ALIGN_END),
+           VV_STYLE(.bg = {0})) {
+      vv_button(c, "cancel", "Cancel", MSG_MODAL_CLOSE, VV_NO_PAYLOAD);
+      vv_button(c, "ok", "Delete", MSG_MODAL_CLOSE, VV_NO_PAYLOAD);
+    }
+    vv_modal_end(c);
   }
 }
 

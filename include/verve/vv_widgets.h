@@ -222,6 +222,24 @@ void     vv_popover_open(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
                          bool *open);
 void     vv_popover_end(vv_Ctx *ctx);
 
+// A disclosure section: a clickable header (caret + `label`) over a collapsible
+// body. Returns true when `open` — build the body between begin/end only then;
+// the container height FLIP-springs as it opens/closes. App owns `open`; the
+// header emits `toggle` with the new bool. Usage:
+//   if (vv_collapsible_begin(c, "adv", "Advanced", s->open, MSG_ADV)) {
+//       ... body widgets ...
+//       vv_collapsible_end(c);
+//   }
+bool     vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
+                              bool open, vv_Msg toggle);
+void     vv_collapsible_end(vv_Ctx *ctx);
+
+// A modal dialog: a full-window dimming scrim that centers a `width`-wide panel.
+// Clicking the scrim or pressing Escape emits `close`. Z-lifts, so declare it
+// inline in view() (guarded by your open flag). Put content between begin/end.
+void     vv_modal_begin(vv_Ctx *ctx, const char *key, float width, vv_Msg close);
+void     vv_modal_end(vv_Ctx *ctx);
+
 // Hover tooltip for `target_id`: after a short hover it fades in a small label
 // below the node. Self-contained (hover timer in node state) and z-lifted, so
 // call it anywhere. Keeps frames alive while timing.

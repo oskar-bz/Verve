@@ -3,7 +3,6 @@
 #include "verve/vv_layout.h"
 #include "verve/vv_value.h"
 
-#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1251,6 +1250,73 @@ void vv_popover_open(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
   popover_panel(ctx, key, at, width);
 }
 void vv_popover_end(vv_Ctx *ctx) { vv_end_box(ctx); }
+
+// ---- collapsible ----------------------------------------------------------
+bool vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
+                          bool open, vv_Msg toggle) {
+  const vv_Theme *t = vv_theme();
+  // Outer container: a column that clips so the body's height animates cleanly.
+  vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .clip = true),
+               VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                          .border_width = vv_all(1), .border_color = t->border));
+
+  vv_Style hhover = {.bg = t->surface_hi};
+  uint32_t hdr = vv_box_keyed(ctx, "hdr", 3,
+                              VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1),
+                                              .cross = VV_ALIGN_CENTER, .gap = 8,
+                                              .padding = vv_hv(12, 10), .focusable = true),
+                              VV_STYLE(.radius = vv_r(t->radius), .hover = &hhover));
+  // ▸ when closed, ▼ when open.
+  vv_text(ctx, open ? "\xe2\x96\xbc" : "\xe2\x96\xb8",
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
+  vv_text(ctx, label, VV_STYLE(.fg = t->text, .font_size = t->font_size));
+  vv_end_box(ctx);
+  if (vv_clicked(ctx, hdr) || vv_activated(ctx, hdr))
+    vv_emit(ctx, toggle, vv_pi(!open));
+
+  if (open) {
+    // Body: caller builds content here, then calls vv_collapsible_end.
+    vv_box_keyed(ctx, "body", 4,
+                 VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .gap = 8,
+                                 .padding = (vv_Edges){12, 0, 12, 12}, .clip = true),
+                 VV_STYLE(0));
+    return true;
+  }
+  vv_end_box(ctx); // no body: close the outer container now
+  return false;
+}
+void vv_collapsible_end(vv_Ctx *ctx) {
+  vv_end_box(ctx); // body
+  vv_end_box(ctx); // outer container
+}
+
+// ---- modal ----------------------------------------------------------------
+void vv_modal_begin(vv_Ctx *ctx, const char *key, float width, vv_Msg close) {
+  const vv_Theme *t = vv_theme();
+  // A full-window scrim that also centers the panel (child). Pressing the scrim
+  // (i.e. outside the panel) or Escape dismisses. z-lifts above normal content.
+  uint32_t scrim = vv_box_keyed(
+      ctx, "__modal", 7,
+      VV_LAYOUT(.has_absolute = true, .z = VV_Z_POPOVER,
+                      .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
+                      .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
+      VV_STYLE(.bg = vv_rgba(0, 0, 0, 0.45f)));
+  if (vv_pressed(ctx, scrim) || escape_pressed(ctx))
+    vv_emit(ctx, close, VV_NO_PAYLOAD);
+  // The panel.
+  vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(width),
+                               .padding = vv_all(20), .gap = 14),
+               VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                          .border_width = vv_all(1), .border_color = t->border,
+                          .shadow = {.color = vv_rgba(0, 0, 0, 0.45f),
+                                     .offset = vv_v2(0, 12), .blur = 32, .spread = 4}));
+}
+void vv_modal_end(vv_Ctx *ctx) {
+  vv_end_box(ctx); // panel
+  vv_end_box(ctx); // scrim
+}
 
 typedef struct {
   float t;
