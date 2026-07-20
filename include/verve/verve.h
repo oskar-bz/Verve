@@ -17,6 +17,7 @@
 #include "vv_node.h"     // IWYU pragma: export
 #include "vv_str.h"      // IWYU pragma: export
 #include "vv_style.h"    // IWYU pragma: export
+#include "vv_theme.h"    // IWYU pragma: export
 #include "vv_types.h"    // IWYU pragma: export
 #include "vv_value.h"    // IWYU pragma: export
 #include "vv_widgets.h"  // IWYU pragma: export

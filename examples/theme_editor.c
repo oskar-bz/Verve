@@ -3,17 +3,23 @@
 // free (§7.1): every edit springs the whole UI — editor and preview alike — to
 // the new palette.
 //
+//   • Theme library   — the Preset picker applies any built-in palette (Verve
+//     dark/light, classic Win32, WinUI/Fluent, GNOME Adwaita, Nord, Solarized)
+//     from vv_theme.h; tweak it from there.
 //   • Multiline / popovers / tooltips — click a swatch to open a color popover
 //     (R/G/B sliders, dismiss on outside-click); swatches have hover tooltips.
-//   • Native dialogs  — File > Save/Open theme write/read a small text format.
+//   • Native dialogs  — File > Save/Open theme write/read a small text format
+//     via the library's vv_theme_save / vv_theme_load — any app can do the same.
 //   • Multi-window    — Window > Detach preview opens a real second window that
 //     renders the same preview with the live theme.
 //
 // Editor + preview both read vv_theme(), so the editor restyles itself as you
 // edit — which is exactly what a theme editor should show.
 #include "verve/verve.h"
+#include "verve/vv_theme.h"
 #include "vv_sdl_gl.h"
 #include <SDL3/SDL.h>
+#include <assert.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -23,29 +29,22 @@
 enum {
   MSG_EDIT_FIELD = 1, MSG_POP_CLOSE, MSG_R, MSG_G, MSG_B,
   MSG_RADIUS, MSG_FONT, MSG_RESET, MSG_OPEN, MSG_SAVE, MSG_DETACH,
+  MSG_PRESET,
   MSG_PV_TEXT, MSG_PV_CHECK, MSG_PV_TOGGLE, MSG_PV_SLIDER,
 };
 
-// The editable colour fields, by name and offset into vv_Theme.
-typedef struct { const char *name; size_t off; } Field;
-static const Field FIELDS[] = {
-  {"surface", offsetof(vv_Theme, surface)},
-  {"surface_hi", offsetof(vv_Theme, surface_hi)},
-  {"accent", offsetof(vv_Theme, accent)},
-  {"accent_hi", offsetof(vv_Theme, accent_hi)},
-  {"accent_lo", offsetof(vv_Theme, accent_lo)},
-  {"text", offsetof(vv_Theme, text)},
-  {"text_muted", offsetof(vv_Theme, text_muted)},
-  {"on_accent", offsetof(vv_Theme, on_accent)},
-  {"track", offsetof(vv_Theme, track)},
-  {"knob", offsetof(vv_Theme, knob)},
-  {"border", offsetof(vv_Theme, border)},
-  {"danger", offsetof(vv_Theme, danger)},
-};
-enum { NFIELDS = (int)(sizeof FIELDS / sizeof FIELDS[0]) };
+// The editable colour fields come from the library's introspection table
+// (vv_theme_fields) — name + offset into vv_Theme. NFIELDS sizes the per-row
+// arrays; main() asserts it matches vv_theme_field_count at startup.
+enum { NFIELDS = 12 };
+
+// Display names for the preset combobox, mirrored from vv_theme_presets in
+// main() (the library owns the list; we just point at its strings).
+static const char *g_preset_names[16];
 
 typedef struct {
   vv_Theme theme;
+  int      preset;      // index into vv_theme_presets shown in the picker
   unsigned theme_rev;   // bumped on every theme edit; drives child-preview rebuilds
   int      editing;     // field index whose popover is open, -1 = none
   bool     pop_open;
@@ -65,42 +64,28 @@ typedef struct {
 } App;
 
 static vv_Color *field_ptr(App *a, int i) {
-  return (vv_Color *)((char *)&a->theme + FIELDS[i].off);
+  return (vv_Color *)((char *)&a->theme + vv_theme_fields[i].off);
 }
 
-// ---- theme (de)serialization: one "name r g b" line per colour -------------
+// ---- theme (de)serialization: the library owns the format now --------------
+// These are just dialog callbacks that call vv_theme_save / vv_theme_load and
+// report the result; any Verve app can load and apply a theme the same way.
 static void save_theme(void *ud, const char *path) {
   App *a = ud;
-  if (!path) { snprintf(a->status, sizeof a->status, "Save cancelled"); goto done; }
-  FILE *f = fopen(path, "wb");
-  if (!f) { snprintf(a->status, sizeof a->status, "Cannot write %s", path); goto done; }
-  for (int i = 0; i < NFIELDS; i++) {
-    vv_Color *c = field_ptr(a, i);
-    fprintf(f, "%s %.4f %.4f %.4f\n", FIELDS[i].name, (double)c->r, (double)c->g, (double)c->b);
-  }
-  fprintf(f, "radius %.2f\nfont_size %.2f\n", (double)a->theme.radius, (double)a->theme.font_size);
-  fclose(f);
-  snprintf(a->status, sizeof a->status, "Saved %s", path);
-done:
+  if (!path) snprintf(a->status, sizeof a->status, "Save cancelled");
+  else if (vv_theme_save(&a->theme, path)) snprintf(a->status, sizeof a->status, "Saved %s", path);
+  else snprintf(a->status, sizeof a->status, "Cannot write %s", path);
   if (a->ctx) vv_invalidate(a->ctx);
 }
 static void load_theme(void *ud, const char *path) {
   App *a = ud;
-  if (!path) { snprintf(a->status, sizeof a->status, "Open cancelled"); goto done; }
-  FILE *f = fopen(path, "rb");
-  if (!f) { snprintf(a->status, sizeof a->status, "Cannot open %s", path); goto done; }
-  char name[64]; float x, y, z;
-  int lines = 0;
-  while (fscanf(f, "%63s %f %f %f", name, &x, &y, &z) >= 2) {
-    if (strcmp(name, "radius") == 0) { a->theme.radius = x; continue; }
-    if (strcmp(name, "font_size") == 0) { a->theme.font_size = x; continue; }
-    for (int i = 0; i < NFIELDS; i++)
-      if (strcmp(name, FIELDS[i].name) == 0) { *field_ptr(a, i) = vv_rgb(x, y, z); lines++; }
+  if (!path) { snprintf(a->status, sizeof a->status, "Open cancelled"); }
+  else if (vv_theme_load(&a->theme, path)) {
+    snprintf(a->status, sizeof a->status, "Loaded %s", path);
+    a->theme_rev++;
+  } else {
+    snprintf(a->status, sizeof a->status, "Cannot read %s", path);
   }
-  fclose(f);
-  snprintf(a->status, sizeof a->status, "Loaded %s (%d colours)", path, lines);
-  a->theme_rev++;
-done:
   if (a->ctx) vv_invalidate(a->ctx);
 }
 
@@ -119,6 +104,14 @@ static void update(void *st, vv_Event ev) {
                      a->theme.font_size = fs; snprintf(a->status, sizeof a->status, "Reset"); } break;
   case MSG_OPEN: vv_app_open_file(a->app, "Verve theme", "vvtheme;txt", load_theme, a); break;
   case MSG_SAVE: vv_app_save_file(a->app, "Verve theme", "vvtheme;txt", "theme.vvtheme", save_theme, a); break;
+  case MSG_PRESET: {  // apply a built-in palette from the library
+    int p = ev.data.as_int;
+    if (p >= 0 && p < vv_theme_preset_count) {
+      a->preset = p;
+      a->theme = vv_theme_presets[p].make();
+      snprintf(a->status, sizeof a->status, "Applied %s", vv_theme_presets[p].name);
+    }
+  } break;
   case MSG_DETACH: a->want_detach++; break;
   case MSG_PV_TEXT:   break; // text_field edits pv_text in place
   case MSG_PV_CHECK:  a->pv_check = ev.data.as_int; break;
@@ -128,7 +121,7 @@ static void update(void *st, vv_Event ev) {
   // Any theme mutation bumps the revision so detached previews rebuild.
   switch (ev.msg) {
   case MSG_R: case MSG_G: case MSG_B:
-  case MSG_RADIUS: case MSG_FONT: case MSG_RESET: a->theme_rev++; break;
+  case MSG_RADIUS: case MSG_FONT: case MSG_RESET: case MSG_PRESET: a->theme_rev++; break;
   default: break;
   }
 }
@@ -175,7 +168,7 @@ static void color_row(vv_Ctx *c, App *a, int i) {
   const vv_Theme *t = vv_theme();
   vv_Color *col = field_ptr(a, i);
   vv_Style hover = {.bg = t->surface_hi};
-  uint32_t id = vv_box_keyed(c, FIELDS[i].name, strlen(FIELDS[i].name),
+  uint32_t id = vv_box_keyed(c, vv_theme_fields[i].name, strlen(vv_theme_fields[i].name),
                              (vv_LayoutDecl){.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
                                              .cross = VV_ALIGN_CENTER, .gap = 10,
                                              .padding = vv_hv(8, 0), .focusable = true},
@@ -187,7 +180,7 @@ static void color_row(vv_Ctx *c, App *a, int i) {
                (vv_Style){.bg = *col, .radius = vv_r(4),
                           .border_width = vv_all(1), .border_color = t->border});
   vv_end_box(c);
-  vv_text(c, FIELDS[i].name, VV_STYLE(.fg = t->text, .font_size = t->font_size));
+  vv_text(c, vv_theme_fields[i].name, VV_STYLE(.fg = t->text, .font_size = t->font_size));
   VV_BOX(c, VV_LAYOUT(.w = vv_grow(1)), VV_STYLE(.bg = {0})) {}
   vv_text(c, vv_fmt(c, "%.2f %.2f %.2f", (double)col->r, (double)col->g, (double)col->b),
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
@@ -247,6 +240,10 @@ static void view(vv_Ctx *c, void *st) {
                           .padding = vv_all(14), .gap = 6, .scroll_y = true, .clip = true),
              VV_STYLE(.bg = vv_rgb(0.09f, 0.10f, 0.12f),
                       .border_width = (vv_Edges){0, 0, 1, 0}, .border_color = t->border)) {
+        // Preset picker: apply any theme from the library, then tweak it.
+        vv_text(c, "Preset", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+        vv_combobox(c, "preset", g_preset_names, vv_theme_preset_count, a->preset, MSG_PRESET);
+
         vv_text(c, "Colours", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
         for (int i = 0; i < NFIELDS; i++) color_row(c, a, i);
 
@@ -295,7 +292,7 @@ static void view(vv_Ctx *c, void *st) {
     vv_Color *col = field_ptr(a, a->editing);
     vv_Rect r = vv_node(c, a->row_id[a->editing])->actual_rect;
     vv_popover_begin(c, "cpop", vv_v2(r.x + r.w - 20, r.y + r.h), 240, MSG_POP_CLOSE);
-    vv_text(c, vv_fmt(c, "Edit %s", FIELDS[a->editing].name),
+    vv_text(c, vv_fmt(c, "Edit %s", vv_theme_fields[a->editing].name),
             VV_STYLE(.fg = t->text, .font_size = t->font_size + 1));
     // a big swatch of the current value
     vv_box_keyed(c, "big", 3, (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(30)},
@@ -310,7 +307,7 @@ static void view(vv_Ctx *c, void *st) {
 
   // Tooltips on every swatch row.
   for (int i = 0; i < NFIELDS; i++)
-    vv_tooltip(c, a->row_id[i], vv_fmt(c, "Click to edit %s", FIELDS[i].name));
+    vv_tooltip(c, a->row_id[i], vv_fmt(c, "Click to edit %s", vv_theme_fields[i].name));
 }
 
 // Detached preview window: its own context, same live theme + state.
@@ -333,6 +330,11 @@ int main(void) {
   vv_set_measure_fn(&ctx, vv_app_measure, app);
   vv_set_idle_mode(&ctx, true); // sleep when settled; springs keep us awake
   vv_app_bind_clipboard(app, &ctx);
+
+  // The editor's colour list must line up with the library's introspection.
+  assert(NFIELDS == vv_theme_field_count);
+  for (int i = 0; i < vv_theme_preset_count && i < 16; i++)
+    g_preset_names[i] = vv_theme_presets[i].name;
 
   static App state;
   state.theme = vv_theme_dark();
