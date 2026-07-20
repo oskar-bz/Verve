@@ -477,11 +477,15 @@ need not outlive the call.
 This canvas is what the visualizer widgets are built on:
 
 - **`vv_xy_pad`** — a 2D value pad; drag the handle, emits the point in `[0,1]²`.
-- **`vv_plot`** — axes/grid plus line/scatter/bar series over your data.
-- **`vv_curve_editor`** — draggable control points connected by a polyline;
-  each drag emits a `vv_CurveEdit` your `update()` writes back.
+- **`vv_plot`** — axes/grid plus line/scatter/bar series over your data. Set
+  `.interactive` for drag-to-pan, wheel-to-zoom (around the cursor), and
+  double-click-to-reset.
+- **`vv_curve_editor`** — draggable control points connected by a polyline (or a
+  Catmull-Rom spline when `smooth`); each drag emits a `vv_CurveEdit` your
+  `update()` writes back.
 
-See `examples/visualize.c` for all three in one dashboard.
+Strokes and points are antialiased (the backend fringes each edge with a ~1px
+alpha feather). See `examples/visualize.c` for all three in one dashboard.
 
 ---
 

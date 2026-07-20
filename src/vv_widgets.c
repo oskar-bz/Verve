@@ -1923,7 +1923,7 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
   uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                              VV_LAYOUT(.w = vv_grow(1),
                                              .h = o.height > 0 ? vv_fixed(o.height) : vv_grow(1),
-                                             .clip = true),
+                                             .clip = true, .focusable = o.interactive),
                              VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
                                         .border_width = vv_all(t->border_width),
                                         .border_color = t->border));
@@ -1952,6 +1952,36 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
   }
   if (xmax <= xmin) { xmin -= 0.5f; xmax += 0.5f; }
   if (ymax <= ymin) { ymin -= 0.5f; ymax += 0.5f; }
+
+  // Interactive view: pan (drag) + zoom (wheel around the cursor), reset on
+  // double-click. The view range lives in per-node state, seeded from the data.
+  if (o.interactive) {
+    typedef struct { float xmin, xmax, ymin, ymax, dx, dy; bool init; } PlotView;
+    PlotView *v = vv_state(ctx, id, PlotView);
+    if (!v->init || vv_double_clicked(ctx, id)) {
+      v->xmin = xmin; v->xmax = xmax; v->ymin = ymin; v->ymax = ymax; v->init = true;
+    }
+    float wheel = ctx->input.wheel;
+    if (wheel != 0.0f && vv_hovered(ctx, id)) {
+      float f = wheel > 0 ? 0.85f : 1.0f / 0.85f;
+      float crx = vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - ix) / iw, 0.0f, 1.0f);
+      float cry = vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - iy) / ih, 0.0f, 1.0f);
+      float cx = v->xmin + crx * (v->xmax - v->xmin);
+      float cy = v->ymax - cry * (v->ymax - v->ymin); // y flipped
+      v->xmin = cx - (cx - v->xmin) * f; v->xmax = cx + (v->xmax - cx) * f;
+      v->ymin = cy - (cy - v->ymin) * f; v->ymax = cy + (v->ymax - cy) * f;
+    }
+    if (vv_pressed(ctx, id)) { v->dx = 0; v->dy = 0; }
+    if (vv_active(ctx, id)) {
+      vv_Vec2 d = vv_drag_delta(ctx, id);
+      float addx = d.x - v->dx, addy = d.y - v->dy; // per-frame increment
+      v->dx = d.x; v->dy = d.y;
+      float ux = (v->xmax - v->xmin) / iw, uy = (v->ymax - v->ymin) / ih;
+      v->xmin -= addx * ux; v->xmax -= addx * ux;
+      v->ymin += addy * uy; v->ymax += addy * uy; // drag down => view moves up
+    }
+    xmin = v->xmin; xmax = v->xmax; ymin = v->ymin; ymax = v->ymax;
+  }
 
   // Gridlines (5x4), drawn under the data.
   if (o.grid) {
@@ -2017,9 +2047,37 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
   vv_end_box(ctx);
 }
 
+// Uniform Catmull-Rom through `p` (n points) sampled into `out` (cap), `per`
+// samples per segment. Endpoints are duplicated so the spline passes through the
+// first and last control points. Returns the sample count.
+static int catmull_rom(const vv_Vec2 *p, int n, vv_Vec2 *out, int cap, int per) {
+  if (n < 3) {
+    int m = n < cap ? n : cap;
+    for (int i = 0; i < m; i++) out[i] = p[i];
+    return m;
+  }
+  int m = 0;
+  for (int i = 0; i < n - 1 && m < cap; i++) {
+    vv_Vec2 p0 = p[i > 0 ? i - 1 : 0], p1 = p[i];
+    vv_Vec2 p2 = p[i + 1], p3 = p[i + 2 < n ? i + 2 : n - 1];
+    for (int s = 0; s < per && m < cap; s++) {
+      float u = (float)s / (float)per, u2 = u * u, u3 = u2 * u;
+      out[m++] = vv_v2(
+          0.5f * (2 * p1.x + (-p0.x + p2.x) * u +
+                  (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * u2 +
+                  (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * u3),
+          0.5f * (2 * p1.y + (-p0.y + p2.y) * u +
+                  (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * u2 +
+                  (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * u3));
+    }
+  }
+  if (m < cap) out[m++] = p[n - 1];
+  return m;
+}
+
 // ---- curve_editor ---------------------------------------------------------
 uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
-                         int count, vv_Msg change) {
+                         int count, bool smooth, vv_Msg change) {
   const vv_Theme *t = vv_theme();
   uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                              VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(180), .clip = true),
@@ -2039,13 +2097,20 @@ uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
     vv_draw_line(ctx, id, vv_v2(0, h * (float)i / 4), vv_v2(w, h * (float)i / 4), 1.0f, g);
   }
 
-  // The polyline through the (normalized, y-up) control points.
-  int m = count > 128 ? 128 : count;
-  vv_Vec2 buf[128];
+  // Control points mapped to local (y-up) pixels, then the connecting curve —
+  // a straight polyline, or a Catmull-Rom spline when smoothing.
+  int m = count > 64 ? 64 : count;
+  vv_Vec2 buf[64];
   for (int k = 0; k < m; k++)
     buf[k] = vv_v2(M + vv_clampf(pts[k].x, 0, 1) * iw,
                    M + (1.0f - vv_clampf(pts[k].y, 0, 1)) * ih);
-  if (m >= 2) vv_draw_polyline(ctx, id, buf, m, 2.0f, t->accent);
+  if (smooth && m >= 3) {
+    vv_Vec2 sm[64 * 12];
+    int sn = catmull_rom(buf, m, sm, (int)(sizeof sm / sizeof sm[0]), 12);
+    vv_draw_polyline(ctx, id, sm, sn, 2.0f, t->accent);
+  } else if (m >= 2) {
+    vv_draw_polyline(ctx, id, buf, m, 2.0f, t->accent);
+  }
 
   // Draggable control points (each its own interactive child).
   vv_Style hover = {.bg = t->accent_hi};

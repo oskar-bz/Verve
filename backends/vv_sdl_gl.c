@@ -509,8 +509,9 @@ static void draw_text(void *ctx, const vv_CmdText *runs, int n) {
 // ---- vector polys (VV_CMD_POLY) -------------------------------------------
 // Solid triangles in logical coords (the poly shader divides by u_vp). Strokes
 // become a quad per segment plus a disc at every vertex (round joins + caps);
-// fills are a triangle fan; points are discs. No SDF/AA — thin strokes read
-// crisp, and the disc joins hide bevel gaps.
+// fills are a triangle fan; points are discs. Edges are antialiased by fringing
+// them with a ~1px feather band whose outer vertices fade to alpha 0 — the
+// per-vertex-colour shader gives the gradient for free, no SDF pass.
 
 // One solid vertex: pos2 + color4.
 static void pv(vv_App *a, float x, float y, vv_Color c) {
@@ -519,32 +520,56 @@ static void pv(vv_App *a, float x, float y, vv_Color c) {
     o[0] = x; o[1] = y; o[2] = c.r; o[3] = c.g; o[4] = c.b; o[5] = c.a;
     a->vcount += 6;
 }
-static void ptri(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, vv_Vec2 p2, vv_Color c) {
-    pv(a, p0.x, p0.y, c); pv(a, p1.x, p1.y, c); pv(a, p2.x, p2.y, c);
+static void ptri3(vv_App *a, vv_Vec2 p0, vv_Color c0, vv_Vec2 p1, vv_Color c1,
+                  vv_Vec2 p2, vv_Color c2) {
+    pv(a, p0.x, p0.y, c0); pv(a, p1.x, p1.y, c1); pv(a, p2.x, p2.y, c2);
 }
-static void pdisc(vv_App *a, vv_Vec2 ctr, float r, vv_Color c) {
+static void ptri(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, vv_Vec2 p2, vv_Color c) {
+    ptri3(a, p0, c, p1, c, p2, c);
+}
+// A quad (inner edge i0->i1, outer edge o1->o0) with per-edge colour: two tris.
+static void pquad2(vv_App *a, vv_Vec2 i0, vv_Vec2 i1, vv_Vec2 o1, vv_Vec2 o0,
+                   vv_Color ci, vv_Color co) {
+    ptri3(a, i0, ci, i1, ci, o1, co);
+    ptri3(a, i0, ci, o1, co, o0, co);
+}
+// Antialiased disc: solid fan to r, plus a feather ring r -> r+aa fading out.
+static void pdisc(vv_App *a, vv_Vec2 ctr, float r, float aa, vv_Color c) {
     if (r <= 0.0f) return;
-    const int SEG = 12;
+    vv_Color c0 = {c.r, c.g, c.b, 0.0f};
+    const int SEG = 16;
     for (int i = 0; i < SEG; i++) {
-        float a0 = (float)i / SEG * 6.2831853f, a1 = (float)(i + 1) / SEG * 6.2831853f;
-        ptri(a, ctr,
-             vv_v2(ctr.x + cosf(a0) * r, ctr.y + sinf(a0) * r),
-             vv_v2(ctr.x + cosf(a1) * r, ctr.y + sinf(a1) * r), c);
+        float t0 = (float)i / SEG * 6.2831853f, t1 = (float)(i + 1) / SEG * 6.2831853f;
+        vv_Vec2 d0 = {cosf(t0), sinf(t0)}, d1 = {cosf(t1), sinf(t1)};
+        vv_Vec2 p0 = {ctr.x + d0.x * r, ctr.y + d0.y * r};
+        vv_Vec2 p1 = {ctr.x + d1.x * r, ctr.y + d1.y * r};
+        ptri(a, ctr, p0, p1, c);
+        vv_Vec2 q0 = {ctr.x + d0.x * (r + aa), ctr.y + d0.y * (r + aa)};
+        vv_Vec2 q1 = {ctr.x + d1.x * (r + aa), ctr.y + d1.y * (r + aa)};
+        pquad2(a, p0, p1, q1, q0, c, c0);
     }
 }
-static void pseg(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, float hw, vv_Color c) {
+// Antialiased segment: solid core quad at ±hw, feather bands out to ±(hw+aa).
+static void pseg(vv_App *a, vv_Vec2 p0, vv_Vec2 p1, float hw, float aa, vv_Color c) {
     float dx = p1.x - p0.x, dy = p1.y - p0.y;
     float len = sqrtf(dx * dx + dy * dy);
     if (len < 1e-4f) return;
-    float nx = -dy / len * hw, ny = dx / len * hw; // perpendicular * half-width
-    vv_Vec2 q0 = {p0.x + nx, p0.y + ny}, q1 = {p1.x + nx, p1.y + ny};
-    vv_Vec2 q2 = {p1.x - nx, p1.y - ny}, q3 = {p0.x - nx, p0.y - ny};
-    ptri(a, q0, q1, q2, c); ptri(a, q0, q2, q3, c);
+    float nx = -dy / len, ny = dx / len; // unit perpendicular
+    vv_Color c0 = {c.r, c.g, c.b, 0.0f};
+    vv_Vec2 a_in = {p0.x + nx * hw, p0.y + ny * hw}, b_in = {p1.x + nx * hw, p1.y + ny * hw};
+    vv_Vec2 a_ni = {p0.x - nx * hw, p0.y - ny * hw}, b_ni = {p1.x - nx * hw, p1.y - ny * hw};
+    ptri(a, a_in, b_in, b_ni, c); ptri(a, a_in, b_ni, a_ni, c);      // core
+    float ho = hw + aa;
+    vv_Vec2 a_out = {p0.x + nx * ho, p0.y + ny * ho}, b_out = {p1.x + nx * ho, p1.y + ny * ho};
+    vv_Vec2 a_no = {p0.x - nx * ho, p0.y - ny * ho}, b_no = {p1.x - nx * ho, p1.y - ny * ho};
+    pquad2(a, a_in, b_in, b_out, a_out, c, c0);  // + side feather
+    pquad2(a, a_ni, b_ni, b_no, a_no, c, c0);    // - side feather
 }
 
 static void draw_polys(void *ctx, const vv_CmdPoly *polys, int n) {
     vv_App *a = ctx;
     a->vcount = 0;
+    float aa = 1.0f / (a->dpi > 0.0f ? a->dpi : 1.0f); // ~1 device px, in logical units
     for (int i = 0; i < n; i++) {
         const vv_CmdPoly *p = &polys[i];
         if (p->count == 0) continue;
@@ -553,7 +578,7 @@ static void draw_polys(void *ctx, const vv_CmdPoly *polys, int n) {
         if (p->flags & VV_POLY_POINTS) {
             float r = p->width * 0.5f;
             for (uint32_t k = 0; k < p->count; k++)
-                pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), r, col);
+                pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), r, aa, col);
         } else if (p->flags & VV_POLY_FILL) {
             for (uint32_t k = 1; k + 1 < p->count; k++)
                 ptri(a, vv_v2(o.x + p->pts[0].x, o.y + p->pts[0].y),
@@ -566,12 +591,12 @@ static void draw_polys(void *ctx, const vv_CmdPoly *polys, int n) {
                 vv_Vec2 aP = {o.x + p->pts[k].x, o.y + p->pts[k].y};
                 vv_Vec2 bP = {o.x + p->pts[(k + 1) % p->count].x,
                               o.y + p->pts[(k + 1) % p->count].y};
-                pseg(a, aP, bP, hw, col);
+                pseg(a, aP, bP, hw, aa, col);
             }
             // Round joins + caps: a disc at every vertex (skip for hairlines).
             if (hw > 0.75f)
                 for (uint32_t k = 0; k < p->count; k++)
-                    pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), hw, col);
+                    pdisc(a, vv_v2(o.x + p->pts[k].x, o.y + p->pts[k].y), hw, aa, col);
         }
     }
     if (a->vcount == 0) return;

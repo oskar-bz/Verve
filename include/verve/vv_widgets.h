@@ -116,18 +116,20 @@ typedef struct {
     float y_min, y_max;   // y data range; leave 0,0 with auto_y to fit data
     bool  auto_x, auto_y; // derive the range from the data
     bool  grid;           // draw gridlines
+    bool  interactive;    // drag to pan, wheel to zoom (double-click resets)
     float height;         // fixed widget height in px (0 => grow to fill)
 } vv_PlotOpts;
 void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
              vv_PlotOpts opts);
 
 // An editable curve: draggable control points in [0,1]x[0,1] (y up), connected
-// by a polyline. `pts` is the app's array (read-only here). Dragging a point
-// emits `change` with a vv_CurveEdit* payload (index + new position); update()
-// writes it back. Points are drawn in the order given.
+// by a polyline — or, when `smooth`, a Catmull-Rom spline through them. `pts` is
+// the app's array (read-only here). Dragging a point emits `change` with a
+// vv_CurveEdit* payload (index + new position); update() writes it back. Points
+// are drawn in the order given.
 typedef struct { int index; vv_Vec2 pos; } vv_CurveEdit;
 uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
-                         int count, vv_Msg change);
+                         int count, bool smooth, vv_Msg change);
 static inline const vv_CurveEdit *vv_as_curve_edit(vv_Payload p) {
     return (const vv_CurveEdit *)p.as_ptr;
 }

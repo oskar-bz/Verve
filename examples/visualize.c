@@ -85,7 +85,7 @@ static void view(vv_Ctx *c, void *st) {
         panel(c, "Source  (drag: x=frequency, y=amplitude)");
         vv_xy_pad(c, "knob", s->knob, MSG_KNOB);
         panel(c, "Transfer curve  (drag the points)");
-        vv_curve_editor(c, "curve", s->curve, NCURVE, MSG_CURVE);
+        vv_curve_editor(c, "curve", s->curve, NCURVE, true, MSG_CURVE);
       }
 
       // Right: the live plot of raw vs. shaped signal.
@@ -100,7 +100,8 @@ static void view(vv_Ctx *c, void *st) {
         };
         vv_plot(c, "plot", series, 2,
                 (vv_PlotOpts){.y_min = 0.0f, .y_max = 1.0f, .auto_x = true,
-                              .grid = true, .height = 0});
+                              .grid = true, .interactive = true, .height = 0});
+        panel(c, "Plot: drag to pan, wheel to zoom, double-click to reset");
       }
     }
   }
