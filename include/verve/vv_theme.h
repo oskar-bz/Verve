@@ -36,6 +36,21 @@ extern const int           vv_theme_field_count;
 vv_Color vv_theme_field_get(const vv_Theme *t, int i);
 void     vv_theme_field_set(vv_Theme *t, int i, vv_Color c);
 
+// The scalar shape/spacing metrics (radius, border width, padding, gap, font
+// size), by name + offset + a sensible editor range. Iterate these to build a
+// generic metric editor or serialize the non-colour side of a theme.
+typedef struct {
+    const char *name;
+    size_t      off;       // offsetof(vv_Theme, <float field>)
+    float       lo, hi;    // suggested slider range
+} vv_ThemeMetric;
+
+extern const vv_ThemeMetric vv_theme_metrics[];
+extern const int            vv_theme_metric_count;
+
+float vv_theme_metric_get(const vv_Theme *t, int i);
+void  vv_theme_metric_set(vv_Theme *t, int i, float v);
+
 // ---- the built-in palette library ------------------------------------------
 // vv_theme_dark() is declared in vv_widgets.h (it is also the default palette).
 vv_Theme vv_theme_light(void);         // clean neutral light

@@ -11,4 +11,8 @@ knob 0.9500 0.9600 0.9800
 border 0.3000 0.3200 0.3700
 danger 0.9000 0.3500 0.3000
 radius 8.00
+border_width 1.00
+pad_x 16.00
+pad_y 9.00
+gap 10.00
 font_size 15.00

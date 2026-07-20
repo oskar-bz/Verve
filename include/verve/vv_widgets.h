@@ -10,13 +10,19 @@
 #include "vv_context.h"
 #include "vv_value.h"
 
-// A theme is just values (§7.1). Swapping one animates for free.
+// A theme is just values (§7.1). Swapping one animates for free. Beyond the
+// palette it also carries the shape/spacing metrics widgets default to — border
+// thickness, control padding, and the gap between stacked elements — so a theme
+// restyles geometry, not only colour.
 typedef struct {
     vv_Color surface, surface_hi;
     vv_Color accent, accent_hi, accent_lo;
     vv_Color text, text_muted, on_accent;
     vv_Color track, knob, border, danger;
     float    radius;
+    float    border_width;   // default hairline-border thickness (px)
+    float    pad_x, pad_y;   // default control padding (horizontal, vertical)
+    float    gap;            // default spacing between stacked elements
     vv_FontID font;
     float     font_size;
 } vv_Theme;

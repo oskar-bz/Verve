@@ -718,7 +718,7 @@ right .w = vv_fixed(a->right_w);
 | Raw-GL viewport inside the UI (custom draw) | `examples/playground.c` |
 | Vector widgets: plot / xy_pad / curve_editor (the `vv_draw_*` canvas) | `examples/visualize.c` |
 | Menus, popovers, tooltips, multi-window, native dialogs | `examples/showcase.c` |
-| A real app: live theme editor (all of the above) | `examples/theme_editor.c` |
+| A real app: live theme editor — palette + metrics (border/padding/gap) | `examples/theme_editor.c` |
 | Resizable multi-panel (IDE shell) with splitters | `examples/panels.c` |
 | A complex stateful widget (calendar) that stays one message | `examples/dates.c` |
 | Radio/progress/stepper/tabs/combobox/tree + context menu, collapsible, modal | `examples/gallery.c` |

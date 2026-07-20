@@ -29,6 +29,25 @@ void vv_theme_field_set(vv_Theme *t, int i, vv_Color c) {
     *(vv_Color *)((char *)t + vv_theme_fields[i].off) = c;
 }
 
+// Scalar metrics. Names double as the serialized keys; "radius"/"font_size"
+// keep their historical names so older .vvtheme files still load.
+const vv_ThemeMetric vv_theme_metrics[] = {
+    {"radius", offsetof(vv_Theme, radius), 0.0f, 24.0f},
+    {"border_width", offsetof(vv_Theme, border_width), 0.0f, 4.0f},
+    {"pad_x", offsetof(vv_Theme, pad_x), 0.0f, 30.0f},
+    {"pad_y", offsetof(vv_Theme, pad_y), 0.0f, 24.0f},
+    {"gap", offsetof(vv_Theme, gap), 0.0f, 24.0f},
+    {"font_size", offsetof(vv_Theme, font_size), 10.0f, 24.0f},
+};
+const int vv_theme_metric_count = (int)(sizeof vv_theme_metrics / sizeof vv_theme_metrics[0]);
+
+float vv_theme_metric_get(const vv_Theme *t, int i) {
+    return *(const float *)((const char *)t + vv_theme_metrics[i].off);
+}
+void vv_theme_metric_set(vv_Theme *t, int i, float v) {
+    *(float *)((char *)t + vv_theme_metrics[i].off) = v;
+}
+
 // ---- the library -----------------------------------------------------------
 // Hex → linear-ish colours. We keep values in the same 0..1 sRGB space the
 // rest of the renderer uses (vv_rgb), so #rrggbb maps component/255.
@@ -44,7 +63,7 @@ vv_Theme vv_theme_light(void) {
         .accent = hex(0x2f6fed),    .accent_hi = hex(0x4d84f2), .accent_lo = hex(0x1f57c8),
         .text = hex(0x1a1c22),      .text_muted = hex(0x6b7078), .on_accent = hex(0xffffff),
         .track = hex(0xd7dae0),     .knob = hex(0xffffff),       .border = hex(0xdadde3),
-        .danger = hex(0xd23b30),    .radius = 8.0f, .font = 0, .font_size = 15.0f,
+        .danger = hex(0xd23b30),    .radius = 8.0f, .border_width = 1.0f, .pad_x = 14.0f, .pad_y = 9.0f, .gap = 10.0f, .font = 0, .font_size = 15.0f,
     };
 }
 
@@ -55,7 +74,7 @@ vv_Theme vv_theme_win32(void) {
         .accent = hex(0x000080),    .accent_hi = hex(0x1084d0), .accent_lo = hex(0x000060),
         .text = hex(0x000000),      .text_muted = hex(0x808080), .on_accent = hex(0xffffff),
         .track = hex(0xc0c0c0),     .knob = hex(0xdfdfdf),       .border = hex(0x808080),
-        .danger = hex(0x800000),    .radius = 0.0f, .font = 0, .font_size = 13.0f,
+        .danger = hex(0x800000),    .radius = 0.0f, .border_width = 1.0f, .pad_x = 10.0f, .pad_y = 5.0f, .gap = 6.0f, .font = 0, .font_size = 13.0f,
     };
 }
 
@@ -66,7 +85,7 @@ vv_Theme vv_theme_winui(void) {
         .accent = hex(0x0067c0),    .accent_hi = hex(0x1a75c5), .accent_lo = hex(0x005499),
         .text = hex(0x1b1b1b),      .text_muted = hex(0x5d5d5d), .on_accent = hex(0xffffff),
         .track = hex(0x868686),     .knob = hex(0xffffff),       .border = hex(0xe0e0e0),
-        .danger = hex(0xc42b1c),    .radius = 6.0f, .font = 0, .font_size = 14.0f,
+        .danger = hex(0xc42b1c),    .radius = 6.0f, .border_width = 1.0f, .pad_x = 16.0f, .pad_y = 10.0f, .gap = 12.0f, .font = 0, .font_size = 14.0f,
     };
 }
 // WinUI / Fluent — Windows 11 dark. Dark accent uses black on-accent text.
@@ -76,7 +95,7 @@ vv_Theme vv_theme_winui_dark(void) {
         .accent = hex(0x4cc2ff),    .accent_hi = hex(0x60cdff), .accent_lo = hex(0x3aa0d8),
         .text = hex(0xf3f3f3),      .text_muted = hex(0xa0a0a0), .on_accent = hex(0x000000),
         .track = hex(0x9a9a9a),     .knob = hex(0xffffff),       .border = hex(0x3d3d3d),
-        .danger = hex(0xff99a4),    .radius = 6.0f, .font = 0, .font_size = 14.0f,
+        .danger = hex(0xff99a4),    .radius = 6.0f, .border_width = 1.0f, .pad_x = 16.0f, .pad_y = 10.0f, .gap = 12.0f, .font = 0, .font_size = 14.0f,
     };
 }
 
@@ -87,7 +106,7 @@ vv_Theme vv_theme_adwaita(void) {
         .accent = hex(0x3584e4),    .accent_hi = hex(0x4a90e4), .accent_lo = hex(0x1c71d8),
         .text = hex(0x2e3436),      .text_muted = hex(0x5e5c64), .on_accent = hex(0xffffff),
         .track = hex(0xd4d4d4),     .knob = hex(0xffffff),       .border = hex(0xdcdcdc),
-        .danger = hex(0xe01b24),    .radius = 9.0f, .font = 0, .font_size = 14.0f,
+        .danger = hex(0xe01b24),    .radius = 9.0f, .border_width = 1.0f, .pad_x = 16.0f, .pad_y = 10.0f, .gap = 12.0f, .font = 0, .font_size = 14.0f,
     };
 }
 vv_Theme vv_theme_adwaita_dark(void) {
@@ -96,7 +115,7 @@ vv_Theme vv_theme_adwaita_dark(void) {
         .accent = hex(0x3584e4),    .accent_hi = hex(0x62a0ea), .accent_lo = hex(0x1c71d8),
         .text = hex(0xededed),      .text_muted = hex(0x9a9996), .on_accent = hex(0xffffff),
         .track = hex(0x1b1b1b),     .knob = hex(0xdedede),       .border = hex(0x1b1b1b),
-        .danger = hex(0xff7b63),    .radius = 9.0f, .font = 0, .font_size = 14.0f,
+        .danger = hex(0xff7b63),    .radius = 9.0f, .border_width = 1.0f, .pad_x = 16.0f, .pad_y = 10.0f, .gap = 12.0f, .font = 0, .font_size = 14.0f,
     };
 }
 
@@ -107,7 +126,7 @@ vv_Theme vv_theme_nord(void) {
         .accent = hex(0x88c0d0),    .accent_hi = hex(0x8fbcbb), .accent_lo = hex(0x5e81ac),
         .text = hex(0xeceff4),      .text_muted = hex(0x9aa4b8), .on_accent = hex(0x2e3440),
         .track = hex(0x434c5e),     .knob = hex(0xe5e9f0),       .border = hex(0x434c5e),
-        .danger = hex(0xbf616a),    .radius = 7.0f, .font = 0, .font_size = 15.0f,
+        .danger = hex(0xbf616a),    .radius = 7.0f, .border_width = 1.0f, .pad_x = 14.0f, .pad_y = 9.0f, .gap = 10.0f, .font = 0, .font_size = 15.0f,
     };
 }
 
@@ -118,7 +137,7 @@ vv_Theme vv_theme_solarized_light(void) {
         .accent = hex(0x268bd2),    .accent_hi = hex(0x2aa198), .accent_lo = hex(0x1c6fa8),
         .text = hex(0x073642),      .text_muted = hex(0x93a1a1), .on_accent = hex(0xfdf6e3),
         .track = hex(0xd9d2b8),     .knob = hex(0xfdf6e3),       .border = hex(0xd9d2b8),
-        .danger = hex(0xdc322f),    .radius = 6.0f, .font = 0, .font_size = 15.0f,
+        .danger = hex(0xdc322f),    .radius = 6.0f, .border_width = 1.0f, .pad_x = 14.0f, .pad_y = 9.0f, .gap = 10.0f, .font = 0, .font_size = 15.0f,
     };
 }
 
@@ -144,9 +163,10 @@ int vv_theme_write(const vv_Theme *t, char *buf, int cap) {
                       "%s %.4f %.4f %.4f\n", vv_theme_fields[i].name,
                       (double)c.r, (double)c.g, (double)c.b);
     }
-    n += snprintf(buf + (n < cap ? n : cap), (size_t)(n < cap ? cap - n : 0),
-                  "radius %.2f\nfont_size %.2f\n",
-                  (double)t->radius, (double)t->font_size);
+    for (int i = 0; i < vv_theme_metric_count; i++)
+        n += snprintf(buf + (n < cap ? n : cap), (size_t)(n < cap ? cap - n : 0),
+                      "%s %.2f\n", vv_theme_metrics[i].name,
+                      (double)vv_theme_metric_get(t, i));
     return n;
 }
 
@@ -159,19 +179,21 @@ int vv_theme_parse(vv_Theme *t, const char *text) {
         // One record per line: "<name> f [f f]".
         int consumed = 0;
         int got = sscanf(p, "%63s %f %f %f%n", name, &x, &y, &z, &consumed);
-        if (got >= 2) {
-            if (strcmp(name, "radius") == 0) {
-                t->radius = x;
-            } else if (strcmp(name, "font_size") == 0) {
-                t->font_size = x;
-            } else if (got >= 4) {
-                for (int i = 0; i < vv_theme_field_count; i++)
-                    if (strcmp(name, vv_theme_fields[i].name) == 0) {
-                        vv_theme_field_set(t, i, vv_rgb(x, y, z));
-                        found++;
-                        break;
-                    }
-            }
+        if (got >= 4) {
+            // "<name> r g b" — a colour field.
+            for (int i = 0; i < vv_theme_field_count; i++)
+                if (strcmp(name, vv_theme_fields[i].name) == 0) {
+                    vv_theme_field_set(t, i, vv_rgb(x, y, z));
+                    found++;
+                    break;
+                }
+        } else if (got >= 2) {
+            // "<name> value" — a scalar metric (radius/border_width/pad/gap/...).
+            for (int i = 0; i < vv_theme_metric_count; i++)
+                if (strcmp(name, vv_theme_metrics[i].name) == 0) {
+                    vv_theme_metric_set(t, i, x);
+                    break;
+                }
         }
         // Advance to the next line.
         const char *nl = strchr(p, '\n');

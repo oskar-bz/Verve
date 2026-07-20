@@ -42,8 +42,10 @@ int main(void) {
         CHECK(got == vv_theme_field_count);       // all colours recognized
         for (int i = 0; i < vv_theme_field_count; i++)
             CHECK(color_near(vv_theme_field_get(&src, i), vv_theme_field_get(&dst, i), 1e-3f));
-        CHECK(fabsf(src.radius - dst.radius) < 1e-2f);
-        CHECK(fabsf(src.font_size - dst.font_size) < 1e-2f);
+        // Every scalar metric (radius/border/padding/gap/font) round-trips too.
+        CHECK(vv_theme_metric_count == 6);
+        for (int i = 0; i < vv_theme_metric_count; i++)
+            CHECK(fabsf(vv_theme_metric_get(&src, i) - vv_theme_metric_get(&dst, i)) < 1e-2f);
     }
 
     // A partial file leaves unmentioned fields untouched.

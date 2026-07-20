@@ -28,10 +28,14 @@
 
 enum {
   MSG_EDIT_FIELD = 1, MSG_POP_CLOSE, MSG_R, MSG_G, MSG_B,
-  MSG_RADIUS, MSG_FONT, MSG_RESET, MSG_OPEN, MSG_SAVE, MSG_DETACH,
+  MSG_RESET, MSG_OPEN, MSG_SAVE, MSG_DETACH,
   MSG_PRESET,
   MSG_PV_TEXT, MSG_PV_CHECK, MSG_PV_TOGGLE, MSG_PV_SLIDER,
+  // One message per scalar metric, in vv_theme_metrics order.
+  MSG_METRIC0,
 };
+// Map metric index -> message (contiguous from MSG_METRIC0).
+#define METRIC_MSG(i) (vv_Msg)(MSG_METRIC0 + (i))
 
 // The editable colour fields come from the library's introspection table
 // (vv_theme_fields) — name + offset into vv_Theme. NFIELDS sizes the per-row
@@ -92,16 +96,22 @@ static void load_theme(void *ud, const char *path) {
 static void update(void *st, vv_Event ev) {
   App *a = st;
   vv_Color *c = (a->editing >= 0 && a->editing < NFIELDS) ? field_ptr(a, a->editing) : NULL;
+
+  // A scalar metric slider (radius / border / padding / gap / font)?
+  int mi = (int)ev.msg - MSG_METRIC0;
+  if (mi >= 0 && mi < vv_theme_metric_count) {
+    vv_theme_metric_set(&a->theme, mi, (float)ev.data.as_float);
+    a->theme_rev++;
+    return;
+  }
+
   switch (ev.msg) {
   case MSG_EDIT_FIELD: a->editing = ev.data.as_int; a->pop_open = true; break;
   case MSG_POP_CLOSE:  a->pop_open = false; break;
   case MSG_R: if (c) c->r = (float)ev.data.as_float; break;
   case MSG_G: if (c) c->g = (float)ev.data.as_float; break;
   case MSG_B: if (c) c->b = (float)ev.data.as_float; break;
-  case MSG_RADIUS: a->theme.radius = (float)ev.data.as_float; break;
-  case MSG_FONT:   a->theme.font_size = (float)ev.data.as_float; break;
-  case MSG_RESET:  { float fs = a->theme.font_size; a->theme = vv_theme_dark();
-                     a->theme.font_size = fs; snprintf(a->status, sizeof a->status, "Reset"); } break;
+  case MSG_RESET:  snprintf(a->status, sizeof a->status, "Reset"); a->theme = vv_theme_dark(); break;
   case MSG_OPEN: vv_app_open_file(a->app, "Verve theme", "vvtheme;txt", load_theme, a); break;
   case MSG_SAVE: vv_app_save_file(a->app, "Verve theme", "vvtheme;txt", "theme.vvtheme", save_theme, a); break;
   case MSG_PRESET: {  // apply a built-in palette from the library
@@ -121,7 +131,7 @@ static void update(void *st, vv_Event ev) {
   // Any theme mutation bumps the revision so detached previews rebuild.
   switch (ev.msg) {
   case MSG_R: case MSG_G: case MSG_B:
-  case MSG_RADIUS: case MSG_FONT: case MSG_RESET: case MSG_PRESET: a->theme_rev++; break;
+  case MSG_RESET: case MSG_PRESET: a->theme_rev++; break;
   default: break;
   }
 }
@@ -151,7 +161,7 @@ static void preview(vv_Ctx *c, App *a) {
     // A card exercising radius / border / shadow / danger.
     VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .padding = vv_all(16), .gap = 8),
            VV_STYLE(.bg = t->surface_hi, .radius = vv_r(t->radius),
-                    .border_width = vv_all(1), .border_color = t->border,
+                    .border_width = vv_all(t->border_width), .border_color = t->border,
                     .shadow = {.color = vv_rgba(0, 0, 0, 0.3f), .offset = vv_v2(0, 4), .blur = 14})) {
       vv_text(c, "Card", VV_STYLE(.fg = t->text, .font_size = t->font_size + 2));
       vv_text(c, "Rounded to the theme radius, with a border and shadow.",
@@ -247,18 +257,20 @@ static void view(vv_Ctx *c, void *st) {
         vv_text(c, "Colours", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
         for (int i = 0; i < NFIELDS; i++) color_row(c, a, i);
 
-        vv_text(c, "Shape", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
-        VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 10),
-               VV_STYLE(.bg = {0})) {
-          vv_text(c, vv_fmt(c, "Radius %.0f", (double)a->theme.radius),
-                  VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
-          vv_slider(c, "rad", a->theme.radius, 0, 24, MSG_RADIUS);
-        }
-        VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 10),
-               VV_STYLE(.bg = {0})) {
-          vv_text(c, vv_fmt(c, "Font %.0f", (double)a->theme.font_size),
-                  VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
-          vv_slider(c, "fnt", a->theme.font_size, 11, 22, MSG_FONT);
+        // Metrics: every scalar (radius/border/padding/gap/font) from the
+        // library's introspection table gets a slider automatically.
+        vv_text(c, "Metrics", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+        for (int i = 0; i < vv_theme_metric_count; i++) {
+          const vv_ThemeMetric *m = &vv_theme_metrics[i];
+          VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 10),
+                 VV_STYLE(.bg = {0})) {
+            VV_BOX(c, VV_LAYOUT(.w = vv_fixed(96)), VV_STYLE(.bg = {0})) {
+              vv_text(c, vv_fmt(c, "%s %.1f", m->name, (double)vv_theme_metric_get(&a->theme, i)),
+                      VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
+            }
+            vv_slider(c, vv_fmt(c, "m%d", i), vv_theme_metric_get(&a->theme, i),
+                      m->lo, m->hi, METRIC_MSG(i));
+          }
         }
         vv_text(c, a->status, VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
       }
