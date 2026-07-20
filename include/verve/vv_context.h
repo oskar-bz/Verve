@@ -79,6 +79,10 @@ typedef struct vv_Ctx {
     bool     idle_mode;         // §4.2 opt-in
     bool     tree_dirty;        // forces a Build tier next frame
     uint32_t unsettled_springs; // Present-tier gate
+    uint32_t unsettled_rects;   // rect (FLIP) springs still moving — forces a
+                                // rebuild so widgets that read a parent's
+                                // actual_rect at build time (slider fill, tab
+                                // indicator, popover anchors) track the animation
 
     uint32_t root;              // pool index of the root node
 

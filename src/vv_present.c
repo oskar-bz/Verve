@@ -148,6 +148,7 @@ static void rect_animate(vv_Ctx *ctx, vv_Node *n, float dt) {
     vv_spring_retarget(&n->ry, n->layout_rect.y);
     vv_spring_retarget(&n->rw, n->layout_rect.w);
     vv_spring_retarget(&n->rh, n->layout_rect.h);
+    float ox = n->rx.x, oy = n->ry.x, ow = n->rw.x, oh = n->rh.x;
     if (teleport) {
         vv_spring_snap(&n->rx); vv_spring_snap(&n->ry);
         vv_spring_snap(&n->rw); vv_spring_snap(&n->rh);
@@ -155,6 +156,14 @@ static void rect_animate(vv_Ctx *ctx, vv_Node *n, float dt) {
         step1(ctx, &n->rx, dt); step1(ctx, &n->ry, dt);
         step1(ctx, &n->rw, dt); step1(ctx, &n->rh, dt);
     }
+    // If the rendered rect moved this frame — by spring step, teleport, or the
+    // reduce-motion snap — dependents that read a parent's actual_rect at build
+    // time (slider fill, tab indicator, popover anchors) are now one frame
+    // behind (§4.5). Flag a rebuild so they follow, e.g. through a window resize
+    // that relayouts with no input of its own.
+    if (fabsf(n->rx.x - ox) > 0.01f || fabsf(n->ry.x - oy) > 0.01f ||
+        fabsf(n->rw.x - ow) > 0.01f || fabsf(n->rh.x - oh) > 0.01f)
+        ctx->unsettled_rects++;
 }
 
 // ---- emit -----------------------------------------------------------------

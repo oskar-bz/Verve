@@ -369,7 +369,11 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
         down_edge || moved_sub || ctx->active_id != 0 || ctx->sb_drag != 0 ||
         ctx->input.wheel != 0.0f || ctx->input.key_count > 0 ||
         ctx->input.text_len > 0 || ctx->input.preedit_len > 0 ||
-        ctx->tree_dirty || ctx->frame_index == 1;
+        ctx->tree_dirty || ctx->frame_index == 1 ||
+        // A moving rect spring means some parent's actual_rect changed; widgets
+        // that read it at build time (slider fill, tab indicator, popovers) must
+        // rebuild to follow it, even with no input (e.g. a window resize).
+        ctx->unsettled_rects > 0;
 }
 
 // Step 2: reset the root and build stack so view code can populate the tree.
@@ -406,6 +410,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 
     // --- Present phase (§4.1 steps 6-8) ---
     ctx->unsettled_springs = 0;   // vv_present recounts still-animating springs
+    ctx->unsettled_rects = 0;
     vv_present(ctx);
 
     ctx->tree_dirty = false;
@@ -418,6 +423,7 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 // still running (§4.2). The frame arena is untouched, so node text stays valid.
 static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
     ctx->unsettled_springs = 0;
+    ctx->unsettled_rects = 0;
     vv_present(ctx);
     ctx->last_tier = VV_TIER_PRESENT;
     return &ctx->cmds;
