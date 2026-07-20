@@ -55,7 +55,8 @@ demo: $(DEMO_BIN)
 gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD)/kanban \
      $(BUILD)/palette $(BUILD)/habit $(BUILD)/inspector $(BUILD)/transitions \
      $(BUILD)/table $(BUILD)/finder $(BUILD)/playground $(BUILD)/bindings \
-     $(BUILD)/showcase $(BUILD)/theme_editor $(BUILD)/panels $(BUILD)/dates $(BUILD)/gallery $(BUILD)/i18n
+     $(BUILD)/showcase $(BUILD)/theme_editor $(BUILD)/panels $(BUILD)/dates $(BUILD)/gallery $(BUILD)/i18n \
+     $(BUILD)/chat
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -108,6 +109,9 @@ $(BUILD)/i18n: examples/i18n.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/gallery: examples/gallery.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/chat: examples/chat.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 
