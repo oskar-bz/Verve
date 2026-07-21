@@ -34,6 +34,9 @@ typedef enum {
 // whose size changes every frame should track reality, not trail it).
 #define VV_INSTANT_RECT (1u << 15)
 
+// Compound literal initializer — mirrors VV_LAYOUT for consistency.
+#define VV_STYLE(...)  (vv_Style) { __VA_ARGS__ }
+
 typedef struct vv_Style {
     vv_Color   bg;
     vv_Color   fg;            // text
