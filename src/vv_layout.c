@@ -156,9 +156,11 @@ static void pass2_width(vv_NodePool *pool, uint32_t idx, float avail_w) {
                 ch->layout_rect.w += leftover * (ch->decl.w.value / grow_weight);
                 ch->layout_rect.w = clamp_size(ch->decl.w, ch->layout_rect.w);
             }
-        } else if (leftover < 0) {
+        } else if (leftover < 0 && !n->decl.wrap) {
             // Overflow: shrink FIT children proportionally toward min. (GROW are
-            // already at min.) Never produce negative sizes (§5.4).
+            // already at min.) Never produce negative sizes (§5.4). A wrapping
+            // row instead keeps children at natural width and flows the overflow
+            // onto new lines (pass 3 height + positioning), so skip shrinking.
             float shrinkable = 0;
             for (uint32_t c = n->first_child; c != VV_NIL; c = P(c)->next_sibling) {
                 vv_Node *ch = P(c);

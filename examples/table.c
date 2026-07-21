@@ -155,14 +155,20 @@ static void header_cell(vv_Ctx *c, Table *t, const char *label, int col, bool gr
             VV_STYLE(.fg = th->accent_hi, .font_size = 10));
 
   // Right-edge drag handle: resize a fixed-width column by dragging its border.
+  // The absolute rect is content-relative (post-padding), so offset by the
+  // cell's right padding to land the grip on the visible column border, not
+  // past it. A faint 2px line advertises the handle; it brightens on hover.
   uint32_t grip = 0;
   if (!grow) {
     vv_Style ghov = {.bg = th->accent, .set = VV_STYLE_BG};
+    float pad_r = 14.0f;               // matches vv_hv(14, 0) above
+    float edge = t->colw[col] - pad_r; // column border, in content space
     grip = vv_box_keyed(c, "grip", 4,
-        (vv_LayoutDecl){.w = vv_fixed(6), .h = vv_grow(1), .has_absolute = true,
-                        .absolute = vv_rect(t->colw[col] - 6, 0, 6, 36),
+        (vv_LayoutDecl){.w = vv_fixed(10), .h = vv_grow(1), .has_absolute = true,
+                        .absolute = vv_rect(edge - 5, 0, 10, 36),
                         .focusable = true, .cursor = VV_CURSOR_RESIZE_H},
-        (vv_Style){.hover = &ghov});
+        (vv_Style){.bg = vv_rgba(th->text.r, th->text.g, th->text.b, 0.12f),
+                   .hover = &ghov});
     vv_end_box(c);
   }
   vv_end_box(c);

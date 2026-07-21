@@ -31,6 +31,7 @@ static void update(void *st, vv_Event ev) {
 static void view(vv_Ctx *c, void *st) {
   App *a = st;
   bool dragging = vv_dnd_active(c);
+  int drag_idx = dragging ? vv_dnd_payload(c).as_int : -1;
 
   VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
                       .gap = 10, .padding = vv_all(18)),
@@ -53,14 +54,35 @@ static void view(vv_Ctx *c, void *st) {
 
         for (int i = 0; i < NCARD; i++) {
           if (a->card[i].col != col) continue;
+          // The source card dims to a placeholder while it's the one being
+          // dragged; the moving copy is the ghost drawn below at the pointer.
+          bool is_dragged = (i == drag_idx);
           uint32_t card = vv_box_keyed(c, vv_fmt(c, "card%d", i), 0,
               VV_LAYOUT(.w = vv_grow(1), .padding = vv_all(12), .focusable = true,
                               .cursor = VV_CURSOR_POINTER),
-              VV_STYLE(.bg = TH->surface_hi, .radius = vv_r(TH->radius),
-                         .border_width = vv_all(TH->border_width), .border_color = TH->border));
+              VV_STYLE(.bg = is_dragged ? TH->surface : TH->surface_hi,
+                         .radius = vv_r(TH->radius),
+                         .border_width = vv_all(TH->border_width),
+                         .border_color = TH->border,
+                         .opacity = is_dragged ? 0.4f : 1.0f));
           vv_text(c, a->card[i].text, VV_STYLE(.fg = TH->text, .font_size = TH->font_size));
           vv_end_box(c);
           vv_drag_source(c, card, vv_pi(i)); // carry the card index while dragged
+        }
+
+        // Landing preview: while the pointer hovers a column the card isn't
+        // already in, open an outlined placeholder slot where it would land.
+        // It springs in/out via FLIP as the pointer moves between columns.
+        if (drag_idx >= 0 && vv_drop_hover(c, cid) &&
+            a->card[drag_idx].col != col) {
+          vv_box_keyed(c, "slot", 4,
+              VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(44),
+                              .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER),
+              VV_STYLE(.bg = TH->accent_lo, .radius = vv_r(TH->radius),
+                         .border_width = vv_all(1.5f), .border_color = TH->accent));
+          vv_text(c, a->card[drag_idx].text,
+                  VV_STYLE(.fg = TH->accent, .font_size = TH->font_size - 1));
+          vv_end_box(c);
         }
         vv_end_box(c);
 
@@ -69,6 +91,29 @@ static void view(vv_Ctx *c, void *st) {
         if (vv_drop_target(c, cid, &pl))
           vv_emit(c, MSG_MOVE, vv_pv2(vv_v2((float)pl.as_int, (float)col)));
       }
+    }
+
+    // Drag ghost: a floating copy of the dragged card that tracks the pointer.
+    // z>0 lifts it above the board and its absolute rect is window-space, so we
+    // position it directly at the mouse (offset so the cursor sits inside it).
+    if (dragging && drag_idx >= 0 && drag_idx < NCARD) {
+      vv_Vec2 m = vv_mouse(c);
+      vv_box_keyed(c, "ghost", 5,
+          VV_LAYOUT(.z = 100, .padding = vv_all(12), .w = vv_fixed(180),
+                          .has_absolute = true,
+                          .absolute = vv_rect(m.x - 90, m.y - 18, 180, 0)),
+          VV_STYLE(.bg = TH->accent_lo, .radius = vv_r(TH->radius),
+                     .border_width = vv_all(1.5f), .border_color = TH->accent,
+                     // Track the pointer 1:1 — no FLIP glide lagging the cursor.
+                     .transition_mask = VV_INSTANT_RECT,
+                     .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                .offset = vv_v2(0, 6), .blur = 18, .spread = 2}));
+      vv_text(c, a->card[drag_idx].text,
+              // Snap with the ghost box; otherwise the label FLIP-glides and
+              // trails the pointer while the box tracks it 1:1.
+              VV_STYLE(.fg = TH->text, .font_size = TH->font_size,
+                         .transition_mask = VV_INSTANT_RECT));
+      vv_end_box(c);
     }
   }
 }

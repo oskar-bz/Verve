@@ -148,6 +148,7 @@ void vv_input_process(vv_Ctx *ctx) {
     ctx->pressed_id = 0;
     ctx->double_clicked_id = 0;
     ctx->right_clicked_id = 0;
+    ctx->mouse_released = !down && was; // edge captured before mouse_prev_down is overwritten
 
     // 1) Hover: fresh hit test against last frame's geometry. While a node is
     // captured (active) or a scrollbar thumb is being dragged, the pointer stays
@@ -313,6 +314,10 @@ vv_Vec2 vv_drag_delta(vv_Ctx *ctx, uint32_t index) {
 // ---- drag and drop --------------------------------------------------------
 bool vv_dnd_active(vv_Ctx *ctx) { return ctx->dnd_dragging; }
 
+// The payload of the in-progress drag (so a view can render a ghost that
+// follows the pointer). Undefined when no drag is active.
+vv_Payload vv_dnd_payload(vv_Ctx *ctx) { return ctx->dnd_payload; }
+
 bool vv_drag_source(vv_Ctx *ctx, uint32_t index, vv_Payload payload) {
     vv_Node *n = vv_node(ctx, index);
     if (!n) return false;
@@ -331,14 +336,26 @@ bool vv_drag_source(vv_Ctx *ctx, uint32_t index, vv_Payload payload) {
 bool vv_drop_target(vv_Ctx *ctx, uint32_t index, vv_Payload *out) {
     vv_Node *n = vv_node(ctx, index);
     if (!n || !ctx->dnd_dragging) return false;
-    // The drop fires on the frame the button releases over a hovered target.
-    bool released = ctx->mouse_prev_down && !ctx->input.mouse_down;
-    if (released && vv_hovered(ctx, index) && ctx->dnd_source != n->id) {
+    // The drop fires on the frame the button releases over the target. Use rect
+    // containment rather than the focusable-resolved hover: a drop zone is a
+    // container (often not focusable), and while a drag is captured the hover is
+    // pinned to the source, so the release point wouldn't resolve to the zone.
+    if (ctx->mouse_released && vv_rect_contains(n->actual_rect, ctx->input.mouse) &&
+        ctx->dnd_source != n->id) {
         if (out) *out = ctx->dnd_payload;
         ctx->dnd_dragging = false; // consume
         return true;
     }
     return false;
+}
+
+// True while a drag is live and the pointer is currently over this target — for
+// a landing preview (a gap/placeholder that opens where the payload would drop).
+// Uses rect containment for the same reason vv_drop_target does.
+bool vv_drop_hover(vv_Ctx *ctx, uint32_t index) {
+    vv_Node *n = vv_node(ctx, index);
+    if (!n || !ctx->dnd_dragging || ctx->dnd_source == n->id) return false;
+    return vv_rect_contains(n->actual_rect, ctx->input.mouse);
 }
 
 void vv_focus(vv_Ctx *ctx, uint32_t index) {

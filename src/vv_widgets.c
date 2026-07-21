@@ -666,12 +666,16 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
   }
 
   // Text or placeholder.
+  // Keyed so the body's identity is independent of how many selection-highlight
+  // boxes precede it — otherwise extending a selection across lines shifts this
+  // node's sequence index, re-birthing it (enter spring: opacity 0, scale 0.96)
+  // every frame, which reads as the text "glitching all over the place".
   if (len == 0 && placeholder && !focused)
-    vv_text(
-        ctx, placeholder,
+    vv_text_keyed(
+        ctx, "body", 4, placeholder,
         VV_STYLE(.fg = t->text_muted, .font_size = size, .font = t->font));
   else
-    vv_text(ctx, buf,
+    vv_text_keyed(ctx, "body", 4, buf,
             VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
 
   // Caret.
@@ -969,9 +973,11 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
       float ax = measure_prefix(ctx, buf + ls, a - ls, size);
       float bx = measure_prefix(ctx, buf + ls, b - ls, size);
       float extra = (le < hi) ? 4.0f : 0.0f; // hint the newline is included
-      float ly = (float)ml_line_index(buf, ls) * line_h;
+      int li = ml_line_index(buf, ls);
+      float ly = (float)li * line_h;
+      const char *skey = vv_fmt(ctx, "sel%d", li);
       vv_box_keyed(
-          ctx, vv_fmt(ctx, "sel%d", ls), 0,
+          ctx, skey, strlen(skey),
           VV_LAYOUT(
               .has_absolute = true,
               // absolute is content-relative (post-padding), so no extra pad
@@ -987,12 +993,16 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
     }
   }
 
+  // Keyed so the body's identity is independent of how many selection-highlight
+  // boxes precede it — otherwise extending a selection across lines shifts this
+  // node's sequence index, re-birthing it (enter spring: opacity 0, scale 0.96)
+  // every frame, which reads as the text "glitching all over the place".
   if (len == 0 && placeholder && !focused)
-    vv_text(
-        ctx, placeholder,
+    vv_text_keyed(
+        ctx, "body", 4, placeholder,
         VV_STYLE(.fg = t->text_muted, .font_size = size, .font = t->font));
   else
-    vv_text(ctx, buf,
+    vv_text_keyed(ctx, "body", 4, buf,
             VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
 
   // Caret at (column x, line y).

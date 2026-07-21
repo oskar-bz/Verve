@@ -99,6 +99,8 @@ typedef struct vv_Ctx {
     vv_ID   right_active_id;   // node captured by a right-button press
     vv_ID   right_clicked_id;  // right down+up both inside this frame
     bool    mouse_prev_down;
+    bool    mouse_released;    // release edge this frame, survives into view()
+                              // (mouse_prev_down is overwritten before view runs)
     bool    mouse_right_prev;
     vv_Vec2 mouse_prev;   // last frame's pointer, to detect movement (idle gate)
     vv_Vec2 drag_start;
@@ -278,6 +280,11 @@ void    vv_focus(vv_Ctx *ctx, uint32_t index);    // programmatic focus
 bool vv_drag_source(vv_Ctx *ctx, uint32_t index, vv_Payload payload);
 bool vv_drop_target(vv_Ctx *ctx, uint32_t index, vv_Payload *out);
 bool vv_dnd_active(vv_Ctx *ctx);
+// Payload of the in-progress drag, for rendering a pointer-following ghost.
+vv_Payload vv_dnd_payload(vv_Ctx *ctx);
+// True while a drag is live and the pointer is over this drop target, for a
+// landing preview (a placeholder that opens where the payload would drop).
+bool vv_drop_hover(vv_Ctx *ctx, uint32_t index);
 // Focus the next focusable node built this frame (autofocus a field on open).
 void    vv_request_focus_next(vv_Ctx *ctx);
 
