@@ -26,7 +26,8 @@ extern "C" {
 // a serializer or a generic colour editor without hard-coding the field list.
 typedef struct {
     const char *name;
-    size_t      off; // offsetof(vv_Theme, <field>)
+    const char *group; // token category header ("Surfaces", "Brand", …)
+    size_t      off;   // offsetof(vv_Theme, <field>)
 } vv_ThemeField;
 
 extern const vv_ThemeField vv_theme_fields[];
@@ -41,6 +42,7 @@ void     vv_theme_field_set(vv_Theme *t, int i, vv_Color c);
 // generic metric editor or serialize the non-colour side of a theme.
 typedef struct {
     const char *name;
+    const char *group;     // metric category header ("Radius", "Spacing", …)
     size_t      off;       // offsetof(vv_Theme, <float field>)
     float       lo, hi;    // suggested slider range
 } vv_ThemeMetric;

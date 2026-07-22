@@ -81,11 +81,13 @@ static void style_init(vv_Node *n, vv_SpringParams p) {
     color_init(A->fg, T->fg, p);
     color_init(A->border_color, T->border_color, p);
     color_init(A->shadow_color, T->shadow.color, p);
+    color_init(A->ring_color, T->ring_color, p);
 
     float rad[4] = { T->radius.tl, T->radius.tr, T->radius.br, T->radius.bl };
     float bw[4]  = { T->border_width.l, T->border_width.t, T->border_width.r, T->border_width.b };
     scalars_init(A->radius, rad, 4, p);
     scalars_init(A->border_width, bw, 4, p);
+    scalars_init(&A->ring_width, &T->ring_width, 1, p);
 
     float op = T->opacity > 0.0f ? T->opacity : 1.0f;
     scalars_init(&A->opacity, &op, 1, p);
@@ -104,10 +106,12 @@ static void style_retarget(vv_Node *n) {
     color_retarget(A->fg, T->fg);
     color_retarget(A->border_color, T->border_color);
     color_retarget(A->shadow_color, T->shadow.color);
+    color_retarget(A->ring_color, T->ring_color);
     float rad[4] = { T->radius.tl, T->radius.tr, T->radius.br, T->radius.bl };
     float bw[4]  = { T->border_width.l, T->border_width.t, T->border_width.r, T->border_width.b };
     scalars_retarget(A->radius, rad, 4);
     scalars_retarget(A->border_width, bw, 4);
+    scalars_retarget(&A->ring_width, &T->ring_width, 1);
     float op = T->opacity > 0.0f ? T->opacity : 1.0f;
     scalars_retarget(&A->opacity, &op, 1);
     float sc = xform_scale(T->transform); if (sc <= 0.0f) sc = 1.0f;
@@ -122,8 +126,10 @@ static void style_step(vv_Ctx *ctx, vv_Node *n, float dt) {
     color_step(ctx, A->fg, dt);
     color_step(ctx, A->border_color, dt);
     color_step(ctx, A->shadow_color, dt);
+    color_step(ctx, A->ring_color, dt);
     scalars_step(ctx, A->radius, 4, dt);
     scalars_step(ctx, A->border_width, 4, dt);
+    scalars_step(ctx, &A->ring_width, 1, dt);
     scalars_step(ctx, &A->opacity, 1, dt);
     scalars_step(ctx, &A->scale, 1, dt);
     scalars_step(ctx, &A->rotation, 1, dt);
@@ -205,6 +211,34 @@ static void emit_draw_list(vv_Ctx *ctx, vv_Node *n, vv_Rect r, float opacity) {
     }
 }
 
+// Focus ring (§7): a border-only rounded rect drawn *outside* the node's box,
+// so it never affects layout. Emitted on top of the fill/content. The stroke
+// colour springs (alpha carries the fade), so a ring set only in a `.focus`
+// variant animates in and out for free.
+static void emit_ring(vv_Ctx *ctx, vv_Node *n, vv_Rect r, float opacity) {
+    vv_StyleAnim *A = &n->actual;
+    float w = A->ring_width.x;
+    vv_Color rc = with_alpha(color_read(A->ring_color), opacity);
+    if (w < 0.1f || rc.a < 0.004f) return;
+
+    float off = n->target.ring_offset;
+    float grow = off + w;
+    vv_Rect ro = vv_rect(r.x - grow, r.y - grow, r.w + 2 * grow, r.h + 2 * grow);
+    float rad[4] = { A->radius[0].x, A->radius[1].x, A->radius[2].x, A->radius[3].x };
+    for (int i = 0; i < 4; i++) rad[i] = rad[i] > 0.0f ? rad[i] + grow : 0.0f;
+
+    vv_Command *cmd = push_cmd(ctx);
+    cmd->kind = VV_CMD_RECT;
+    cmd->as.rect = (vv_CmdRect){
+        .rect         = ro,
+        .radius       = (vv_Corners){ rad[0], rad[1], rad[2], rad[3] },
+        .fill_a       = (vv_Color){0},
+        .fill_b       = (vv_Color){0},
+        .border_width = (vv_Edges){ w, w, w, w },
+        .border_color = rc,
+    };
+}
+
 static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
     vv_StyleAnim *A = &n->actual;
 
@@ -270,6 +304,7 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
     bool has_shadow = n->target.shadow.color.a > 0.001f;
     if (bg.a * opacity < 0.001f && !has_border && !has_shadow) {
         emit_draw_list(ctx, n, r, opacity);
+        emit_ring(ctx, n, r, opacity);
         return;
     }
 
@@ -294,6 +329,7 @@ static void emit_node(vv_Ctx *ctx, vv_Node *n, float inherited_opacity) {
 
     // Vector content (§14.5) paints on top of the fill/border.
     emit_draw_list(ctx, n, r, opacity);
+    emit_ring(ctx, n, r, opacity);
 }
 
 // Overlay scrollbar thumbs for a scroll container, painted on top of its
@@ -408,7 +444,11 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
 }
 
 // Detached exiting nodes (§3.3): drive their exit spring and paint the corpse
-// on top using its last actual_rect. Text corpses are skipped (dangling string).
+// on top using its last actual_rect. Corpses whose content lives in the frame
+// arena are skipped, because that arena has been reset/overwritten since the
+// node was last built and the pointers now dangle: text (n->text) and vector
+// draw-lists (n->draw) both fall in this class. Rebuilt nodes never reach here,
+// so their arena content is always current.
 static void present_exiting(vv_Ctx *ctx, float dt) {
     vv_NodePool *pool = &ctx->pool;
     for (uint32_t i = 0; i < pool->count; i++) {
@@ -416,7 +456,7 @@ static void present_exiting(vv_Ctx *ctx, float dt) {
         if (!(n->flags & VV_FLAG_ALIVE) || !(n->flags & VV_FLAG_EXITING)) continue;
         if (n->last_touched_frame == ctx->frame_index) continue; // still in-tree
         step1(ctx, &n->exit, dt);
-        if (n->flags & VV_FLAG_TEXT) continue;
+        if ((n->flags & VV_FLAG_TEXT) || n->draw) continue;
         emit_node(ctx, n, 1.0f);
     }
 }

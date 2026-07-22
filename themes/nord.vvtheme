@@ -1,16 +1,38 @@
-surface 0.1804 0.2039 0.2510
-surface_hi 0.2314 0.2588 0.3216
-accent 0.5333 0.7529 0.8157
-accent_hi 0.5608 0.7373 0.7333
-accent_lo 0.3686 0.5059 0.6745
-text 0.9255 0.9373 0.9569
+surface_app 0.1804 0.2039 0.2510
+surface_panel 0.2214 0.2437 0.2884
+surface_card 0.2542 0.2756 0.3184
+surface_overlay 0.2869 0.3074 0.3484
+control_bg_rest 0.2627 0.2980 0.3686
+control_bg_hover 0.2314 0.2588 0.3216
+control_bg_active 0.3807 0.4104 0.4696
+control_bg_disabled 0.2133 0.2416 0.2980
+text_primary 0.9255 0.9373 0.9569
+text_secondary 0.7647 0.7902 0.8392
 text_muted 0.6039 0.6431 0.7216
-on_accent 0.1804 0.2039 0.2510
-track 0.2627 0.2980 0.3686
+text_inverse 0.1000 0.1000 0.1200
+text_on_brand 0.1804 0.2039 0.2510
+border_subtle 0.2216 0.2510 0.3098
+border_default 0.2627 0.2980 0.3686
+border_strong 0.5208 0.5437 0.5896
+border_focus 0.5333 0.7529 0.8157
+brand_primary 0.5333 0.7529 0.8157
+brand_hover 0.5608 0.7373 0.7333
+brand_active 0.3686 0.5059 0.6745
+brand_subtle 0.2580 0.3247 0.3752
+status_error 0.7490 0.3804 0.4157
+status_error_subtle 0.2827 0.2357 0.2806
+status_warning 0.9647 0.7647 0.2627
+status_success 0.3412 0.8902 0.5373
+status_info 0.3843 0.6275 0.9176
 knob 0.8980 0.9137 0.9412
-border 0.2627 0.2980 0.3686
-danger 0.7490 0.3804 0.4157
 radius 7.00
+radius_sm 3.50
+radius_lg 12.25
+radius_full 9999.00
+space_xs 3.60
+space_sm 9.00
+space_md 14.00
+space_lg 28.00
 border_width 1.00
 pad_x 14.00
 pad_y 9.00

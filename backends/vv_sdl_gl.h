@@ -7,8 +7,15 @@
 #define VV_SDL_GL_H
 
 #include "verve/verve.h"
+#include "vv_vector.h" // craz-backed icons / SVG / canvas
 
 typedef struct vv_App vv_App;
+
+// The craz-backed vector services bound to this app (icons, full-colour SVG, and
+// the dynamic canvas — see vv_vector.h). Lazily created on first call and freed
+// with the app; uploads textures through the app's own backend. The per-frame
+// ImageRef ring is rewound automatically in vv_app_frame_begin.
+vv_Vector  *vv_app_vector(vv_App *app);
 
 vv_App     *vv_app_create(const char *title, int w, int h);
 void        vv_app_destroy(vv_App *app);
@@ -77,5 +84,33 @@ void        vv_app_bind_clipboard(vv_App *app, vv_Ctx *ctx);
 
 // Apply a cursor shape to the window. Call once per frame with vv_cursor(ctx).
 void        vv_app_set_cursor(vv_App *app, vv_CursorShape shape);
+
+// ---- turn-key app runner ---------------------------------------------------
+// The whole boilerplate loop — create a window, load fonts, init a context, and
+// run drain-messages -> update -> conditionally-rebuild-view -> present until
+// the user quits — collapsed into one call. Use this for a normal app; use
+// vv_hot_run (vv_hot.h) for a hot-reloadable one.
+//
+// Zeroed fields fall back to sensible defaults, so the minimum is:
+//   vv_app_run(&(vv_AppDesc){ .title = "Demo", .update = u, .view = v, .state = &s });
+typedef struct {
+  const char        *title;         // window title (default "Verve")
+  int                width, height; // window size (default 900 x 640)
+  vv_Color           clear;         // clear colour; a==0 => a dark default
+  // NULL-terminated TTF paths, loaded in order as font ids 0,1,2,… (e.g.
+  // regular/bold/italic for rich text). NULL => the built-in fallback list
+  // (first path that loads becomes the single default face).
+  const char *const *fonts;
+  vv_UpdateFn        update;        // required
+  vv_ViewFn          view;          // required
+  void              *state;         // passed to update/view
+  bool               clipboard;     // bind the OS clipboard (for text editors)
+} vv_AppDesc;
+
+int vv_app_run(const vv_AppDesc *desc);
+
+// The built-in default font search list (NULL-terminated). Handy when you want
+// to load fonts yourself but keep the same defaults vv_app_run uses.
+const char *const *vv_default_font_paths(void);
 
 #endif // VV_SDL_GL_H

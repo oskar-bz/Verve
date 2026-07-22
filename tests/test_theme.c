@@ -11,14 +11,22 @@ static bool color_near(vv_Color a, vv_Color b, float eps) {
 }
 
 int main(void) {
-    // Introspection: 12 colour fields, each reachable by name + offset.
-    CHECK(vv_theme_field_count == 12);
+    // Introspection: a full token set, each reachable by name + offset, and
+    // each carrying a category group.
+    CHECK(vv_theme_field_count == 27);
+    for (int i = 0; i < vv_theme_field_count; i++)
+        CHECK(vv_theme_fields[i].group != NULL);
     {
         vv_Theme t = vv_theme_dark();
-        vv_theme_field_set(&t, 2, vv_rgb(0.1f, 0.2f, 0.3f));   // "accent"
-        CHECK(strcmp(vv_theme_fields[2].name, "accent") == 0);
-        CHECK(color_near(vv_theme_field_get(&t, 2), vv_rgb(0.1f, 0.2f, 0.3f), 1e-4f));
-        CHECK(color_near(t.accent, vv_rgb(0.1f, 0.2f, 0.3f), 1e-4f));
+        // brand_primary is the legacy `accent` under a token name.
+        int bi = -1;
+        for (int i = 0; i < vv_theme_field_count; i++)
+            if (strcmp(vv_theme_fields[i].name, "brand_primary") == 0) bi = i;
+        CHECK(bi >= 0);
+        vv_theme_field_set(&t, bi, vv_rgb(0.1f, 0.2f, 0.3f));
+        CHECK(color_near(vv_theme_field_get(&t, bi), vv_rgb(0.1f, 0.2f, 0.3f), 1e-4f));
+        CHECK(color_near(t.brand_primary, vv_rgb(0.1f, 0.2f, 0.3f), 1e-4f));
+        CHECK(color_near(t.accent, vv_rgb(0.1f, 0.2f, 0.3f), 1e-4f)); // legacy alias
     }
 
     // The library has a non-empty preset table and every maker returns a theme.
@@ -33,7 +41,7 @@ int main(void) {
     // write -> parse round-trips every colour + radius + font_size.
     {
         vv_Theme src = vv_theme_adwaita();
-        char buf[1024];
+        char buf[2048];
         int n = vv_theme_write(&src, buf, (int)sizeof buf);
         CHECK(n > 0 && n < (int)sizeof buf);
 
@@ -42,8 +50,9 @@ int main(void) {
         CHECK(got == vv_theme_field_count);       // all colours recognized
         for (int i = 0; i < vv_theme_field_count; i++)
             CHECK(color_near(vv_theme_field_get(&src, i), vv_theme_field_get(&dst, i), 1e-3f));
-        // Every scalar metric (radius/border/padding/gap/font) round-trips too.
-        CHECK(vv_theme_metric_count == 6);
+        // Every scalar metric (radius + spacing scales, border/padding/gap/font)
+        // round-trips too.
+        CHECK(vv_theme_metric_count == 13);
         for (int i = 0; i < vv_theme_metric_count; i++)
             CHECK(fabsf(vv_theme_metric_get(&src, i) - vv_theme_metric_get(&dst, i)) < 1e-2f);
     }
@@ -68,6 +77,29 @@ int main(void) {
         CHECK(vv_theme_load(&dst, path));
         for (int i = 0; i < vv_theme_field_count; i++)
             CHECK(color_near(vv_theme_field_get(&src, i), vv_theme_field_get(&dst, i), 1e-3f));
+    }
+
+    // Alpha survives write -> parse: a translucent colour keeps its alpha, and an
+    // opaque colour still round-trips to a == 1.
+    {
+        vv_Theme src = vv_theme_dark();
+        vv_Color trans = src.brand_primary; trans.a = 0.4f;
+        vv_theme_field_set(&src, 0, trans); // surface_app, index 0
+        char buf[2048];
+        int n = vv_theme_write(&src, buf, (int)sizeof buf);
+        CHECK(n > 0 && n < (int)sizeof buf);
+
+        vv_Theme dst = vv_theme_light();
+        CHECK(vv_theme_parse(&dst, buf) == vv_theme_field_count);
+        CHECK(fabsf(vv_theme_field_get(&dst, 0).a - 0.4f) < 1e-3f); // translucent kept
+        CHECK(fabsf(vv_theme_field_get(&dst, 1).a - 1.0f) < 1e-3f); // opaque -> a==1
+    }
+
+    // A bare three-component line parses as fully opaque.
+    {
+        vv_Theme t = vv_theme_dark();
+        CHECK(vv_theme_parse(&t, "brand_primary 0.2 0.4 0.6\n") == 1);
+        CHECK(fabsf(t.brand_primary.a - 1.0f) < 1e-4f);
     }
 
     if (vv_test_fails) { printf("FAILED (%d)\n", vv_test_fails); return 1; }

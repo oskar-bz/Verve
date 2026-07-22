@@ -27,7 +27,7 @@
 #include <string.h>
 
 enum {
-  MSG_EDIT_FIELD = 1, MSG_POP_CLOSE, MSG_R, MSG_G, MSG_B,
+  MSG_EDIT_FIELD = 1, MSG_POP_CLOSE, MSG_R, MSG_G, MSG_B, MSG_A, MSG_HEX,
   MSG_RESET, MSG_OPEN, MSG_SAVE, MSG_DETACH,
   MSG_PRESET,
   MSG_PV_TEXT, MSG_PV_CHECK, MSG_PV_TOGGLE, MSG_PV_SLIDER,
@@ -38,10 +38,12 @@ enum {
 // Map metric index -> message (contiguous from MSG_METRIC0).
 #define METRIC_MSG(i) (vv_Msg)(MSG_METRIC0 + (i))
 
-// The editable colour fields come from the library's introspection table
-// (vv_theme_fields) — name + offset into vv_Theme. NFIELDS sizes the per-row
-// arrays; main() asserts it matches vv_theme_field_count at startup.
-enum { NFIELDS = 12 };
+// The editable colour tokens come from the library's introspection table
+// (vv_theme_fields) — name + category + offset into vv_Theme. The list is now a
+// full design-token set (surfaces, controls, text, borders, brand, status), so
+// we size the per-row arrays to a generous max and drive the loops off
+// vv_theme_field_count at runtime.
+enum { MAXFIELDS = 48 };
 
 // Display names for the preset combobox, mirrored from vv_theme_presets in
 // main() (the library owns the list; we just point at its strings).
@@ -54,9 +56,10 @@ typedef struct {
   unsigned theme_rev;   // bumped on every theme edit; drives child-preview rebuilds
   int      editing;     // field index whose popover is open, -1 = none
   bool     pop_open;
-  uint32_t row_id[NFIELDS]; // captured in view, anchors popover + tooltips
+  uint32_t row_id[MAXFIELDS]; // captured in view, anchors popover + tooltips
 
-  char  ch_buf[3][8];   // 0-255 text for the R/G/B channel inputs (popover)
+  char  ch_buf[4][8];   // 0-255 text for the R/G/B/A channel inputs (popover)
+  char  hex_buf[12];    // "#rrggbbaa" text for the hex input (popover)
 
   // interactive preview state, so the preview reacts (hover/checked/etc.)
   bool  pv_check, pv_toggle;
@@ -71,6 +74,86 @@ typedef struct {
 
 static vv_Color *field_ptr(App *a, int i) {
   return (vv_Color *)((char *)&a->theme + vv_theme_fields[i].off);
+}
+
+// Parse a hex colour into `out`, updating it in place. Accepts "#rgb", "#rrggbb"
+// and "#rrggbbaa" (with or without '#', surrounding space ignored) so pasted
+// values work as-is. The RGB digits always set r/g/b; alpha is set only by the
+// 8-digit form, so pasting "#rrggbb" keeps the current opacity. Returns true on
+// a complete, valid code.
+static bool parse_hex_color(const char *s, vv_Color *out) {
+  while (*s == ' ' || *s == '\t' || *s == '#') s++;
+  char digits[9];
+  int n = 0;
+  for (; s[n] && n < 9; n++) {
+    char ch = s[n];
+    bool is_hex = (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+    if (!is_hex) break;
+    if (n < 8) digits[n] = ch;
+  }
+  if (s[n] != '\0' && s[n] != ' ' && s[n] != '\t') return false; // trailing junk
+  char d8[9]; // normalise to rrggbbaa
+  if (n == 3) { // #rgb shorthand
+    d8[0] = d8[1] = digits[0]; d8[2] = d8[3] = digits[1]; d8[4] = d8[5] = digits[2];
+    n = 6;
+  } else if (n == 6 || n == 8) {
+    memcpy(d8, digits, (size_t)n);
+  } else {
+    return false;
+  }
+  d8[6] = (n == 6) ? '0' : d8[6]; // placeholders; alpha only consumed when n==8
+  d8[n] = '\0';
+  unsigned v = (unsigned)strtoul(d8, NULL, 16);
+  if (n == 8) {
+    out->r = (float)((v >> 24) & 0xff) / 255.0f;
+    out->g = (float)((v >> 16) & 0xff) / 255.0f;
+    out->b = (float)((v >> 8) & 0xff) / 255.0f;
+    out->a = (float)(v & 0xff) / 255.0f;
+  } else {
+    out->r = (float)((v >> 16) & 0xff) / 255.0f;
+    out->g = (float)((v >> 8) & 0xff) / 255.0f;
+    out->b = (float)(v & 0xff) / 255.0f;
+  }
+  return true;
+}
+
+// Format a colour as "#rrggbb", or "#rrggbbaa" when it is not fully opaque.
+static void format_hex_color(vv_Color c, char *buf, int cap) {
+  int r = (int)lroundf(c.r * 255.0f), g = (int)lroundf(c.g * 255.0f),
+      b = (int)lroundf(c.b * 255.0f), al = (int)lroundf(c.a * 255.0f);
+  r = r < 0 ? 0 : (r > 255 ? 255 : r);
+  g = g < 0 ? 0 : (g > 255 ? 255 : g);
+  b = b < 0 ? 0 : (b > 255 ? 255 : b);
+  al = al < 0 ? 0 : (al > 255 ? 255 : al);
+  if (al >= 255) snprintf(buf, (size_t)cap, "#%02x%02x%02x", r, g, b);
+  else           snprintf(buf, (size_t)cap, "#%02x%02x%02x%02x", r, g, b, al);
+}
+
+// A swatch that reveals transparency: a checkerboard drawn behind the colour,
+// so a partly-transparent value reads against both light and dark cells. The
+// swatch is a *fixed* w x h box so the checkerboard geometry is known here at
+// build time — we must not read the node's actual_rect, since a freshly-created
+// swatch (popover just opened) has no laid-out rect yet.
+static void alpha_swatch(vv_Ctx *c, const char *key, vv_Color col, float w, float h) {
+  const vv_Theme *t = vv_theme();
+  uint32_t id = vv_box_keyed(c, key, strlen(key),
+      (vv_LayoutDecl){.w = vv_fixed(w), .h = vv_fixed(h)},
+      (vv_Style){.bg = vv_rgb(1, 1, 1), .radius = vv_r(6),
+                 .border_width = vv_all(1), .border_color = t->border});
+  const float cell = 7.0f;
+  vv_Color grey = vv_rgb(0.72f, 0.73f, 0.76f);
+  for (float y = 0; y < h; y += cell) {
+    for (float x = 0; x < w; x += cell) {
+      if ((((int)(x / cell) + (int)(y / cell)) & 1) == 0) continue;
+      float x2 = x + cell < w ? x + cell : w, y2 = y + cell < h ? y + cell : h;
+      vv_Vec2 quad[4] = {{x, y}, {x2, y}, {x2, y2}, {x, y2}};
+      vv_draw_polygon(c, id, quad, 4, grey);
+    }
+  }
+  // The colour (with its alpha) painted over the whole swatch.
+  vv_Vec2 full[4] = {{0, 0}, {w, 0}, {w, h}, {0, h}};
+  vv_draw_polygon(c, id, full, 4, col);
+  vv_end_box(c);
 }
 
 // ---- theme (de)serialization: the library owns the format now --------------
@@ -97,7 +180,7 @@ static void load_theme(void *ud, const char *path) {
 
 static void update(void *st, vv_Event ev) {
   App *a = st;
-  vv_Color *c = (a->editing >= 0 && a->editing < NFIELDS) ? field_ptr(a, a->editing) : NULL;
+  vv_Color *c = (a->editing >= 0 && a->editing < vv_theme_field_count) ? field_ptr(a, a->editing) : NULL;
 
   // A scalar metric slider (radius / border / padding / gap / font)?
   int mi = (int)ev.msg - MSG_METRIC0;
@@ -113,6 +196,8 @@ static void update(void *st, vv_Event ev) {
   case MSG_R: if (c) c->r = (float)ev.data.as_float; break;
   case MSG_G: if (c) c->g = (float)ev.data.as_float; break;
   case MSG_B: if (c) c->b = (float)ev.data.as_float; break;
+  case MSG_A: if (c) c->a = (float)ev.data.as_float; break;
+  case MSG_HEX: if (c) { vv_Color parsed = *c; if (parse_hex_color(a->hex_buf, &parsed)) *c = parsed; } break;
   case MSG_RESET:  snprintf(a->status, sizeof a->status, "Reset"); a->theme = vv_theme_dark(); break;
   case MSG_OPEN: vv_app_open_file(a->app, "Verve theme", "vvtheme;txt", load_theme, a); break;
   case MSG_SAVE: vv_app_save_file(a->app, "Verve theme", "vvtheme;txt", "theme.vvtheme", save_theme, a); break;
@@ -135,45 +220,191 @@ static void update(void *st, vv_Event ev) {
   }
   // Any theme mutation bumps the revision so detached previews rebuild.
   switch (ev.msg) {
-  case MSG_R: case MSG_G: case MSG_B:
+  case MSG_R: case MSG_G: case MSG_B: case MSG_A: case MSG_HEX:
   case MSG_RESET: case MSG_PRESET: a->theme_rev++; break;
   default: break;
   }
 }
 
-// ---- the preview: representative widgets, styled entirely by the live theme --
+// ---- preview building blocks ------------------------------------------------
+// A section header inside the preview column.
+static void pv_section(vv_Ctx *c, const char *title) {
+  const vv_Theme *t = vv_theme();
+  vv_text(c, title, VV_STYLE(.fg = t->text_primary, .font_size = t->font_size + 3));
+}
+
+// A labelled colour swatch — the token applied as a fill, with its name under.
+static void pv_swatch(vv_Ctx *c, vv_Color col, const char *label) {
+  const vv_Theme *t = vv_theme();
+  VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .gap = 4, .w = vv_fixed(104)),
+         VV_STYLE(.bg = {0})) {
+    vv_box_keyed(c, label, strlen(label),
+                 (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(32)},
+                 (vv_Style){.bg = col, .radius = vv_r(t->radius_sm),
+                            .border_width = vv_all(1), .border_color = t->border_subtle});
+    vv_end_box(c);
+    vv_text(c, label, VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 4));
+  }
+}
+
+// A pill badge filled with `bg`, text in `fg` — for the status row.
+static void pv_badge(vv_Ctx *c, const char *key, const char *label, vv_Color bg, vv_Color fg) {
+  const vv_Theme *t = vv_theme();
+  vv_box_keyed(c, key, strlen(key),
+               (vv_LayoutDecl){.padding = vv_hv((int)t->space_sm, (int)t->space_xs),
+                               .cross = VV_ALIGN_CENTER},
+               (vv_Style){.bg = bg, .radius = vv_r(t->radius_full)});
+  vv_text(c, label, VV_STYLE(.fg = fg, .font_size = t->font_size - 3));
+  vv_end_box(c);
+}
+
+// ---- the preview: the design tokens, applied to real surfaces + widgets ------
 static void preview(vv_Ctx *c, App *a) {
   const vv_Theme *t = vv_theme();
   VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
-                      .padding = vv_all(20), .gap = 14, .scroll_y = true, .clip = true),
-         VV_STYLE(.bg = t->surface)) {
-    vv_text(c, "Preview", VV_STYLE(.fg = t->text, .font_size = t->font_size + 6));
-    vv_text(c, "Every widget below reads the live theme.",
-            VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 1));
+                      .padding = vv_all((int)t->space_lg), .gap = (int)t->space_md,
+                      .scroll_y = true, .clip = true),
+         VV_STYLE(.bg = t->surface_app)) {
+    vv_text(c, "Preview", VV_STYLE(.fg = t->text_primary, .font_size = t->font_size + 6));
+    vv_text(c, "Every surface, control and accent below reads a live design token.",
+            VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 1));
 
-    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = 10), VV_STYLE(.bg = {0})) {
+    // --- Surfaces: elevation on top of the app background --------------------
+    pv_section(c, "Surfaces");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .w = vv_grow(1)),
+           VV_STYLE(.bg = {0})) {
+      struct { vv_Color col; const char *l; } surf[] = {
+        {t->surface_panel, "panel"}, {t->surface_card, "card"}, {t->surface_overlay, "overlay"},
+      };
+      for (int i = 0; i < 3; i++) {
+        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_fixed(60),
+                            .padding = vv_all((int)t->space_sm), .main = VV_ALIGN_CENTER),
+               VV_STYLE(.bg = surf[i].col, .radius = vv_r(t->radius_lg),
+                        .border_width = vv_all(t->border_width), .border_color = t->border_subtle,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.28f), .offset = vv_v2(0, 3), .blur = 12})) {
+          vv_text(c, surf[i].l, VV_STYLE(.fg = t->text_primary, .font_size = t->font_size - 1));
+        }
+      }
+    }
+
+    // --- Text ramp -----------------------------------------------------------
+    pv_section(c, "Text");
+    vv_text(c, "Primary — high-contrast body text", VV_STYLE(.fg = t->text_primary, .font_size = t->font_size));
+    vv_text(c, "Secondary — captions and labels", VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 1));
+    vv_text(c, "Muted — placeholders and hints", VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 1));
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .padding = vv_all((int)t->space_sm), .cross = VV_ALIGN_CENTER),
+           VV_STYLE(.bg = t->text_primary, .radius = vv_r(t->radius_md))) {
+      vv_text(c, "Inverse — text on an inverted surface", VV_STYLE(.fg = t->text_inverse, .font_size = t->font_size - 1));
+    }
+
+    // --- Interactive controls: the built-in widgets (aliased tokens) ---------
+    pv_section(c, "Controls");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm), VV_STYLE(.bg = {0})) {
       vv_button(c, "pvb1", "Primary", MSG_PV_CHECK, vv_pi(!a->pv_check));
       vv_button(c, "pvb2", "Secondary", MSG_PV_TOGGLE, vv_pi(!a->pv_toggle));
+    }
+    // Control-fill states shown side by side.
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .wrap = true), VV_STYLE(.bg = {0})) {
+      struct { vv_Color col; const char *l; } cs[] = {
+        {t->control_bg_rest, "rest"}, {t->control_bg_hover, "hover"},
+        {t->control_bg_active, "active"}, {t->control_bg_disabled, "disabled"},
+      };
+      for (int i = 0; i < 4; i++) pv_swatch(c, cs[i].col, cs[i].l);
     }
     vv_checkbox(c, "pvc", "Enable option", a->pv_check, MSG_PV_CHECK);
     vv_toggle(c, "pvt", a->pv_toggle, MSG_PV_TOGGLE);
     vv_slider(c, "pvs", a->pv_slider, 0, 1, MSG_PV_SLIDER);
     vv_text_field(c, "pvf", a->pv_text, (int)sizeof a->pv_text, "Type here...", MSG_PV_TEXT);
-
     vv_list_item(c, "pl1", "Selected list item", true, MSG_PV_CHECK, vv_pi(!a->pv_check));
     vv_list_item(c, "pl2", "Unselected list item", false, MSG_PV_CHECK, vv_pi(!a->pv_check));
 
-    // A card exercising radius / border / shadow / danger.
-    VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .padding = vv_all(16), .gap = 8),
-           VV_STYLE(.bg = t->surface_hi, .radius = vv_r(t->radius),
-                    .border_width = vv_all(t->border_width), .border_color = t->border,
-                    .shadow = {.color = vv_rgba(0, 0, 0, 0.3f), .offset = vv_v2(0, 4), .blur = 14})) {
-      vv_text(c, "Card", VV_STYLE(.fg = t->text, .font_size = t->font_size + 2));
-      vv_text(c, "Rounded to the theme radius, with a border and shadow.",
-              VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 1));
-      VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .padding = vv_hv(12, 8), .cross = VV_ALIGN_CENTER),
-             VV_STYLE(.bg = t->danger, .radius = vv_r(t->radius))) {
-        vv_text(c, "Danger", VV_STYLE(.fg = t->on_accent, .font_size = t->font_size - 1));
+    // --- Borders -------------------------------------------------------------
+    pv_section(c, "Borders");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .wrap = true), VV_STYLE(.bg = {0})) {
+      struct { vv_Color col; const char *l; } bd[] = {
+        {t->border_subtle, "subtle"}, {t->border_default, "default"},
+        {t->border_strong, "strong"}, {t->border_focus, "focus"},
+      };
+      for (int i = 0; i < 4; i++) {
+        VV_BOX(c, VV_LAYOUT(.w = vv_fixed(104), .h = vv_fixed(34), .main = VV_ALIGN_CENTER,
+                            .cross = VV_ALIGN_CENTER),
+               VV_STYLE(.bg = t->surface_card, .radius = vv_r(t->radius_md),
+                        .border_width = vv_all(2), .border_color = bd[i].col)) {
+          vv_text(c, bd[i].l, VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 4));
+        }
+      }
+    }
+
+    // --- Brand ---------------------------------------------------------------
+    pv_section(c, "Brand");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .wrap = true), VV_STYLE(.bg = {0})) {
+      pv_swatch(c, t->brand_primary, "primary");
+      pv_swatch(c, t->brand_hover, "hover");
+      pv_swatch(c, t->brand_active, "active");
+      pv_swatch(c, t->brand_subtle, "subtle");
+    }
+    // Selection highlight using brand_subtle.
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .padding = vv_hv((int)t->space_md, (int)t->space_sm),
+                        .cross = VV_ALIGN_CENTER),
+           VV_STYLE(.bg = t->brand_subtle, .radius = vv_r(t->radius_md))) {
+      vv_text(c, "Selected row — brand_subtle fill", VV_STYLE(.fg = t->text_primary, .font_size = t->font_size - 1));
+    }
+
+    // --- Status & feedback ---------------------------------------------------
+    pv_section(c, "Status");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .wrap = true, .cross = VV_ALIGN_CENTER),
+           VV_STYLE(.bg = {0})) {
+      pv_badge(c, "sb_err", "Error", t->status_error, t->text_on_brand);
+      pv_badge(c, "sb_warn", "Warning", t->status_warning, t->text_inverse);
+      pv_badge(c, "sb_ok", "Success", t->status_success, t->text_inverse);
+      pv_badge(c, "sb_info", "Info", t->status_info, t->text_on_brand);
+    }
+    // An error banner on the subtle error tint.
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .padding = vv_all((int)t->space_sm),
+                        .cross = VV_ALIGN_CENTER),
+           VV_STYLE(.bg = t->status_error_subtle, .radius = vv_r(t->radius_md),
+                    .border_width = vv_all(t->border_width), .border_color = t->status_error)) {
+      vv_text(c, "Something went wrong — status_error_subtle banner.",
+              VV_STYLE(.fg = t->text_primary, .font_size = t->font_size - 1));
+    }
+
+    // --- Radius scale --------------------------------------------------------
+    pv_section(c, "Radius scale");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .gap = (int)t->space_sm, .cross = VV_ALIGN_CENTER),
+           VV_STYLE(.bg = {0})) {
+      struct { float r; const char *l; } rs[] = {
+        {t->radius_sm, "sm"}, {t->radius_md, "md"}, {t->radius_lg, "lg"}, {t->radius_full, "full"},
+      };
+      for (int i = 0; i < 4; i++) {
+        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .gap = 4), VV_STYLE(.bg = {0})) {
+          vv_box_keyed(c, rs[i].l, strlen(rs[i].l),
+                       (vv_LayoutDecl){.w = vv_fixed(56), .h = vv_fixed(40)},
+                       (vv_Style){.bg = t->surface_card, .radius = vv_r(rs[i].r),
+                                  .border_width = vv_all(t->border_width),
+                                  .border_color = t->border_default});
+          vv_end_box(c);
+          vv_text(c, rs[i].l, VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 4));
+        }
+      }
+    }
+
+    // --- Spacing scale -------------------------------------------------------
+    pv_section(c, "Spacing scale");
+    VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .gap = (int)t->space_xs, .w = vv_grow(1)),
+           VV_STYLE(.bg = {0})) {
+      struct { float s; const char *l; } sp[] = {
+        {t->space_xs, "xs"}, {t->space_sm, "sm"}, {t->space_md, "md"}, {t->space_lg, "lg"},
+      };
+      for (int i = 0; i < 4; i++) {
+        VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 8), VV_STYLE(.bg = {0})) {
+          VV_BOX(c, VV_LAYOUT(.w = vv_fixed(24)), VV_STYLE(.bg = {0})) {
+            vv_text(c, sp[i].l, VV_STYLE(.fg = t->text_secondary, .font_size = t->font_size - 4));
+          }
+          vv_box_keyed(c, vv_fmt(c, "sp%d", i), 4,
+                       (vv_LayoutDecl){.w = vv_fixed((int)(sp[i].s * 4)), .h = vv_fixed(12)},
+                       (vv_Style){.bg = t->brand_primary, .radius = vv_r(t->radius_sm)});
+          vv_end_box(c);
+        }
       }
     }
   }
@@ -242,7 +473,7 @@ static void view(vv_Ctx *c, void *st) {
   uint32_t m_file = 0, m_win = 0;
 
   VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1)),
-         VV_STYLE(.bg = vv_rgb(0.07f, 0.08f, 0.10f))) {
+         VV_STYLE(.bg = a->theme.surface)) {
 
     vv_menubar_begin(c);
     m_file = vv_menu_title(c, "file", "File");
@@ -252,23 +483,47 @@ static void view(vv_Ctx *c, void *st) {
     VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_grow(1)),
            VV_STYLE(.bg = {0})) {
 
-      // Left: the editor.
-      VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(340), .h = vv_grow(1),
-                          .padding = vv_all(14), .gap = 6, .scroll_y = true, .clip = true),
-             VV_STYLE(.bg = vv_rgb(0.09f, 0.10f, 0.12f),
-                      .border_width = (vv_Edges){0, 0, 1, 0}, .border_color = t->border)) {
-        // Preset picker: apply any theme from the library, then tweak it.
-        vv_text(c, "Preset", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
-        vv_combobox(c, "preset", g_preset_names, vv_theme_preset_count, a->preset, MSG_PRESET);
+      // Left: the editor. An outer, non-scrolling column holds a fixed header
+      // (the preset picker) above a scrolling body. Keeping the combobox out of
+      // the clipped/scrolling body lets its dropdown overlay paint correctly.
+      VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(340), .h = vv_grow(1)),
+             VV_STYLE(.bg = t->surface_panel,
+                      .border_width = (vv_Edges){0, 0, 1, 0}, .border_color = t->border_default)) {
+        // Fixed header: the preset picker — apply any library theme, then tweak.
+        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .padding = vv_hv(14, 12), .gap = 6),
+               VV_STYLE(.bg = {0})) {
+          vv_text(c, "Preset", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+          vv_combobox(c, "preset", g_preset_names, vv_theme_preset_count, a->preset, MSG_PRESET);
+        }
 
-        vv_text(c, "Colours", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
-        for (int i = 0; i < NFIELDS; i++) color_row(c, a, i);
+        // Scrolling body: tokens, metrics, animation.
+        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                            .padding = vv_hv(14, 0), .gap = 6, .scroll_y = true, .clip = true),
+               VV_STYLE(.bg = {0})) {
+        // Colour tokens, one row each, with a header whenever the category
+        // (vv_theme_fields[i].group) changes — the introspection table drives
+        // both the rows and the sectioning.
+        vv_text(c, "Colour tokens", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+        const char *cgroup = NULL;
+        for (int i = 0; i < vv_theme_field_count; i++) {
+          if (vv_theme_fields[i].group != cgroup) {
+            cgroup = vv_theme_fields[i].group;
+            vv_text(c, cgroup, VV_STYLE(.fg = t->accent_hi, .font_size = t->font_size - 1));
+          }
+          color_row(c, a, i);
+        }
 
-        // Metrics: every scalar (radius/border/padding/gap/font) from the
-        // library's introspection table gets a slider automatically.
+        // Metrics: every scalar (radius + spacing scales, border/padding/gap/
+        // font) from the introspection table gets a slider automatically,
+        // sectioned by group the same way.
         vv_text(c, "Metrics", VV_STYLE(.fg = t->text, .font_size = t->font_size + 4));
+        const char *mgroup = NULL;
         for (int i = 0; i < vv_theme_metric_count; i++) {
           const vv_ThemeMetric *m = &vv_theme_metrics[i];
+          if (m->group != mgroup) {
+            mgroup = m->group;
+            vv_text(c, mgroup, VV_STYLE(.fg = t->accent_hi, .font_size = t->font_size - 1));
+          }
           VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 10),
                  VV_STYLE(.bg = {0})) {
             VV_BOX(c, VV_LAYOUT(.w = vv_fixed(96)), VV_STYLE(.bg = {0})) {
@@ -299,6 +554,7 @@ static void view(vv_Ctx *c, void *st) {
         }
 
         vv_text(c, a->status, VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
+        } // end scrolling body
       }
 
       // Right: the live preview.
@@ -332,19 +588,34 @@ static void view(vv_Ctx *c, void *st) {
     vv_popover_begin(c, "cpop", vv_v2(r.x + r.w - 20, r.y + r.h), 240, MSG_POP_CLOSE);
     vv_text(c, vv_fmt(c, "Edit %s", vv_theme_fields[a->editing].name),
             VV_STYLE(.fg = t->text, .font_size = t->font_size + 1));
-    // a big swatch of the current value
-    vv_box_keyed(c, "big", 3, (vv_LayoutDecl){.w = vv_grow(1), .h = vv_fixed(30)},
-                 (vv_Style){.bg = *col, .radius = vv_r(6),
-                            .border_width = vv_all(1), .border_color = t->border});
-    vv_end_box(c);
+    // a big swatch of the current value, over a checkerboard so its alpha shows.
+    // Width = popover width (240) minus its 14px padding on each side.
+    alpha_swatch(c, "big", *col, 212.0f, 30.0f);
+
+    // Hex input: type or paste "#rrggbb" (also #rgb) to set the colour. While
+    // focused we parse the field and emit MSG_HEX; while unfocused it mirrors the
+    // live colour so it always reflects slider/channel edits.
+    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8),
+           VV_STYLE(.bg = {0})) {
+      vv_text(c, "Hex", VV_STYLE(.fg = t->text_muted, .font_size = t->font_size));
+      uint32_t hf = vv_text_field(c, "hexf", a->hex_buf, (int)sizeof a->hex_buf, "#rrggbbaa", MSG_PV_TEXT);
+      if (vv_focused(c, hf)) {
+        vv_Color parsed = *col;
+        if (parse_hex_color(a->hex_buf, &parsed)) vv_emit(c, MSG_HEX, VV_NO_PAYLOAD);
+      } else {
+        format_hex_color(*col, a->hex_buf, (int)sizeof a->hex_buf);
+      }
+    }
+
     channel(c, a, 0, "R", t->danger, &col->r, "cr", "crt", MSG_R);
     channel(c, a, 1, "G", vv_rgb(0.4f, 0.85f, 0.4f), &col->g, "cg", "cgt", MSG_G);
     channel(c, a, 2, "B", t->accent, &col->b, "cb", "cbt", MSG_B);
+    channel(c, a, 3, "A", t->text, &col->a, "ca", "cat", MSG_A);
     vv_popover_end(c);
   }
 
   // Tooltips on every swatch row.
-  for (int i = 0; i < NFIELDS; i++)
+  for (int i = 0; i < vv_theme_field_count; i++)
     vv_tooltip(c, a->row_id[i], vv_fmt(c, "Click to edit %s", vv_theme_fields[i].name));
 }
 
@@ -369,8 +640,8 @@ int main(void) {
   vv_set_idle_mode(&ctx, true); // sleep when settled; springs keep us awake
   vv_app_bind_clipboard(app, &ctx);
 
-  // The editor's colour list must line up with the library's introspection.
-  assert(NFIELDS == vv_theme_field_count);
+  // The editor's per-row arrays must be big enough for the token list.
+  assert(vv_theme_field_count <= MAXFIELDS);
   for (int i = 0; i < vv_theme_preset_count && i < 16; i++)
     g_preset_names[i] = vv_theme_presets[i].name;
 
@@ -380,7 +651,7 @@ int main(void) {
   state.anim_response = 0.25f; state.anim_damping = 1.0f; state.anim_speed = 1.0f;
   state.pv_slider = 0.6f;
   snprintf(state.pv_text, sizeof state.pv_text, "Hello");
-  snprintf(state.status, sizeof state.status, "%d colours - edit and watch it spring", NFIELDS);
+  snprintf(state.status, sizeof state.status, "%d colour tokens - edit and watch it spring", vv_theme_field_count);
   state.app = app; state.ctx = &ctx;
 
   Child children[2] = {0};

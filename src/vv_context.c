@@ -106,6 +106,10 @@ static void overlay_variant(vv_Style *dst, const vv_Style *v) {
     if ((s & VV_STYLE_FG) || v->fg.a > 0.0f)                     dst->fg = v->fg;
     if ((s & VV_STYLE_BORDER_COLOR) || v->border_color.a > 0.0f) dst->border_color = v->border_color;
     if ((s & VV_STYLE_SHADOW) || v->shadow.color.a > 0.0f)       dst->shadow = v->shadow;
+    if ((s & VV_STYLE_RING) || v->ring_color.a > 0.0f) {
+        dst->ring_color = v->ring_color; dst->ring_width = v->ring_width;
+        dst->ring_offset = v->ring_offset;
+    }
     if (s & VV_STYLE_RADIUS)       dst->radius = v->radius;
     if (s & VV_STYLE_BORDER_WIDTH) dst->border_width = v->border_width;
     if ((s & VV_STYLE_OPACITY) || v->opacity > 0.0f)             dst->opacity = v->opacity;
