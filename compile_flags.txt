@@ -1,4 +1,7 @@
 -std=c11
 -Iinclude
+-Ibackends
+-Ivendor
+-I../craz/include
 -Wall
 -Wextra

@@ -1,11 +1,12 @@
-// habit.c — a GitHub-style contribution grid for tracking a daily habit. Click a
-// day to cycle its intensity (0..4); the cell springs to its new color instead
-// of snapping, and the streak counter reflects the run of days ending today.
+// habit.c — a GitHub-style contribution grid for tracking a daily habit. Click
+// a day to cycle its intensity (0..4); the cell springs to its new color
+// instead of snapping, and the streak counter reflects the run of days ending
+// today.
 //
 // Why it's a good Verve demo: 371 cells, each just declaring a bg *target* from
 // its stored level. Changing one level re-declares that cell's target and the
-// per-node color spring glides it there — you write zero animation code, and the
-// grid still ripples to life on load because every cell springs up from the
+// per-node color spring glides it there — you write zero animation code, and
+// the grid still ripples to life on load because every cell springs up from the
 // theme's zero-color. Cell fills interpolate through OKLab (vv_color_lerp), so
 // the low->high ramp stays perceptually even.
 //
@@ -29,13 +30,16 @@ static void update(void *state, vv_Event ev) {
   Habit *h = state;
   if (ev.msg == MSG_CYCLE) {
     int d = (int)ev.data.as_int;
-    if (d >= 0 && d < NDAYS) h->level[d] = (uint8_t)((h->level[d] + 1) % 5);
+    h->level[d] = (uint8_t)((h->level[d] + 1) % 5);
+    printf("SET %d to %d\n", d, h->level[d]);
   }
 }
 
-// Empty cells are a flat dark square; filled cells ramp low->high through OKLab.
+// Empty cells are a flat dark square; filled cells ramp low->high through
+// OKLab.
 static vv_Color cell_color(int level) {
-  if (level <= 0) return vv_rgb(0.16f, 0.17f, 0.20f);
+  if (level <= 0)
+    return vv_rgb(0.16f, 0.17f, 0.20f);
   vv_Color lo = vv_rgb(0.13f, 0.32f, 0.20f); // faint green
   vv_Color hi = vv_rgb(0.35f, 0.90f, 0.45f); // vivid green
   return vv_color_lerp(lo, hi, (float)(level - 1) / 3.0f);
@@ -44,13 +48,19 @@ static vv_Color cell_color(int level) {
 // Current streak: consecutive filled days counting back from the last cell.
 static int streak(const Habit *h) {
   int n = 0;
-  for (int d = NDAYS - 1; d >= 0 && h->level[d] > 0; d--) n++;
+  for (int d = NDAYS - 1; d >= 0; d--) {
+    printf("(%d,%d) ", d, h->level[d]);
+    if (h->level[d] == 0) break;
+    n++;
+  }
+  printf("\n");
   return n;
 }
 
 static int total(const Habit *h) {
   int n = 0;
-  for (int d = 0; d < NDAYS; d++) n += h->level[d] > 0;
+  for (int d = 0; d < NDAYS; d++)
+    n += h->level[d] > 0;
   return n;
 }
 
@@ -58,13 +68,15 @@ static void view(vv_Ctx *c, void *state) {
   Habit *h = state;
   const vv_Theme *t = vv_theme();
 
-  VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
-                      .padding = vv_all(28), .gap = 18),
+  VV_BOX(c,
+         VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                   .padding = vv_all(28), .gap = 18),
          VV_STYLE(.bg = vv_rgb(0.09f, 0.10f, 0.12f))) {
 
     // Header: title + live streak / total.
-    VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
-                        .main = VV_ALIGN_SPACE_BETWEEN),
+    VV_BOX(c,
+           VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
+                     .main = VV_ALIGN_SPACE_BETWEEN),
            VV_STYLE(.bg = {0})) {
       VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .gap = 2), VV_STYLE(.bg = {0})) {
         vv_text(c, "Meditation", VV_STYLE(.fg = t->text, .font_size = 24));
@@ -86,8 +98,8 @@ static void view(vv_Ctx *c, void *state) {
       for (int w = 0; w < WEEKS; w++) {
         char wk[8];
         snprintf(wk, sizeof wk, "w%d", w);
-        vv_box_keyed(c, wk, strlen(wk),
-                     VV_LAYOUT(.dir = VV_COLUMN, .gap = 4), VV_STYLE(.bg = {0}));
+        vv_box_keyed(c, wk, strlen(wk), VV_LAYOUT(.dir = VV_COLUMN, .gap = 4),
+                     VV_STYLE(.bg = {0}));
         for (int d = 0; d < 7; d++) {
           int idx = w * 7 + d;
           char key[10];
@@ -101,7 +113,8 @@ static void view(vv_Ctx *c, void *state) {
                        .border_width = vv_all(1),
                        .border_color = vv_rgba(0, 0, 0, 0), .hover = &hov));
           vv_end_box(c);
-          if (vv_clicked(c, id)) vv_emit(c, MSG_CYCLE, vv_pi(idx));
+          if (vv_clicked(c, id))
+            vv_emit(c, MSG_CYCLE, vv_pi(idx));
         }
         vv_end_box(c);
       }
@@ -126,12 +139,17 @@ static void view(vv_Ctx *c, void *state) {
 
 int main(void) {
   vv_App *app = vv_app_create("Verve \xc2\xb7 Habit", 980, 320);
-  if (!app) return 1;
-  const char *fonts[] = {"/usr/share/fonts/noto/NotoSans-Regular.ttf",
-                         "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", NULL};
-  for (int i = 0; fonts[i]; i++) if (vv_app_load_font(app, fonts[i])) break;
+  if (!app)
+    return 1;
+  const char *fonts[] = {
+      "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+      "/usr/share/fonts/liberation/LiberationSans-Regular.ttf", NULL};
+  for (int i = 0; fonts[i]; i++)
+    if (vv_app_load_font(app, fonts[i]))
+      break;
 
-  vv_Ctx ctx; vv_init(&ctx);
+  vv_Ctx ctx;
+  vv_init(&ctx);
   vv_set_measure_fn(&ctx, vv_app_measure, app);
   vv_set_idle_mode(&ctx, true);
 
@@ -148,10 +166,14 @@ int main(void) {
   uint64_t prev = SDL_GetPerformanceCounter();
   while (vv_app_pump(app, &in)) {
     uint64_t now = SDL_GetPerformanceCounter();
-    float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency(); prev = now;
-    if (dt > 0.1f) dt = 0.1f;
+    float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency();
+    prev = now;
+    if (dt > 0.1f)
+      dt = 0.1f;
 
-    int w, h; float dpi; vv_app_size(app, &w, &h, &dpi);
+    int w, h;
+    float dpi;
+    vv_app_size(app, &w, &h, &dpi);
     vv_set_window(&ctx, (float)w, (float)h, dpi);
 
     vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &habit);

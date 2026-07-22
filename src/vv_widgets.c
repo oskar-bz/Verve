@@ -14,19 +14,22 @@ static vv_Theme g_theme;
 static bool g_theme_set;
 
 vv_Theme vv_theme_dark(void) {
-  return (vv_Theme){
-      .surface = vv_rgb(0.14f, 0.15f, 0.18f),
-      .surface_hi = vv_rgb(0.20f, 0.22f, 0.26f),
-      .accent = vv_rgb(0.22f, 0.55f, 0.95f),
-      .accent_hi = vv_rgb(0.35f, 0.65f, 1.00f),
-      .accent_lo = vv_rgb(0.16f, 0.42f, 0.78f),
-      .text = vv_rgb(0.92f, 0.93f, 0.95f),
+  // Only the *core* palette + functional metrics are given here; vv_theme_complete
+  // (in vv_theme.c) derives the rest of the semantic tokens (surfaces, control
+  // states, text/border variants, status hues) and the radius/spacing scales.
+  return vv_theme_complete((vv_Theme){
+      .surface_app = vv_rgb(0.14f, 0.15f, 0.18f),
+      .control_bg_hover = vv_rgb(0.20f, 0.22f, 0.26f),
+      .brand_primary = vv_rgb(0.22f, 0.55f, 0.95f),
+      .brand_hover = vv_rgb(0.35f, 0.65f, 1.00f),
+      .brand_active = vv_rgb(0.16f, 0.42f, 0.78f),
+      .text_primary = vv_rgb(0.92f, 0.93f, 0.95f),
       .text_muted = vv_rgb(0.55f, 0.58f, 0.63f),
-      .on_accent = vv_rgb(1.00f, 1.00f, 1.00f),
-      .track = vv_rgb(0.24f, 0.26f, 0.30f),
+      .text_on_brand = vv_rgb(1.00f, 1.00f, 1.00f),
+      .control_bg_rest = vv_rgb(0.24f, 0.26f, 0.30f),
       .knob = vv_rgb(0.95f, 0.96f, 0.98f),
-      .border = vv_rgb(0.30f, 0.32f, 0.37f),
-      .danger = vv_rgb(0.90f, 0.35f, 0.30f),
+      .border_default = vv_rgb(0.30f, 0.32f, 0.37f),
+      .status_error = vv_rgb(0.90f, 0.35f, 0.30f),
       .radius = 8.0f,
       .border_width = 1.0f,
       .pad_x = 16.0f,
@@ -34,7 +37,7 @@ vv_Theme vv_theme_dark(void) {
       .gap = 10.0f,
       .font = 0,
       .font_size = 15.0f,
-  };
+  });
 }
 
 void vv_set_theme(const vv_Theme *t) {
@@ -69,15 +72,14 @@ void vv_on(vv_Ctx *ctx, uint32_t id, vv_On on) {
 
 void vv_label(vv_Ctx *ctx, const char *text) {
   const vv_Theme *t = vv_theme();
-  vv_text(
-      ctx, text,
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, text,
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
 }
 void vv_label_muted(vv_Ctx *ctx, const char *text) {
   const vv_Theme *t = vv_theme();
   vv_text(ctx, text,
-          VV_STYLE(
-              .fg = t->text_muted, .font_size = t->font_size, .font = t->font));
+          VV_STYLE(.fg = t->text_muted, .font_size = t->font_size,
+                   .font = t->font));
 }
 
 // ---- button --------------------------------------------------------------
@@ -88,19 +90,20 @@ uint32_t vv_button_on(vv_Ctx *ctx, const char *key, const char *label,
   // Variants are consumed at build time (§7.1), so these locals are fine.
   vv_Style hover = {.bg = t->accent_hi};
   vv_Style active = {.bg = t->accent_lo, .transform = vv_scale(0.97f)};
-  vv_Style focus = {.border_color = t->on_accent,
-                    .border_width = vv_all(2)}; // keyboard ring
+  vv_Style focus = {.ring_color = t->border_focus, .ring_width = 2,
+                    .ring_offset = 2, .set = VV_STYLE_RING}; // keyboard ring
   uint32_t id = vv_box_keyed(
       ctx, key, key ? strlen(key) : 0,
-      VV_LAYOUT(.w = vv_fit(), .h = vv_fit(), .padding = vv_hv(t->pad_x, t->pad_y),
-                .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
-                .focusable = true, .cursor = VV_CURSOR_POINTER),
+      VV_LAYOUT(.w = vv_fit(), .h = vv_fit(),
+                .padding = vv_hv(t->pad_x, t->pad_y), .main = VV_ALIGN_CENTER,
+                .cross = VV_ALIGN_CENTER, .focusable = true,
+                .cursor = VV_CURSOR_POINTER),
       VV_STYLE(.bg = t->accent, .radius = vv_r(t->radius), .hover = &hover,
                .active = &active, .focus = &focus));
 
-  vv_text(ctx, label,
-          VV_STYLE(
-              .fg = t->on_accent, .font_size = t->font_size, .font = t->font));
+  vv_text(
+      ctx, label,
+      VV_STYLE(.fg = t->on_accent, .font_size = t->font_size, .font = t->font));
   vv_end_box(ctx);
   if (vv_clicked(ctx, id) || vv_activated(ctx, id))
     vv_emit(ctx, click, arg);
@@ -118,10 +121,13 @@ uint32_t vv_button(vv_Ctx *ctx, const char *key, const char *label,
 
 uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
+  vv_Style focus = {.ring_color = t->border_focus, .ring_width = 2,
+                    .ring_offset = 2, .set = VV_STYLE_RING};
   uint32_t id = vv_box_keyed(
       ctx, key, key ? strlen(key) : 0,
       VV_LAYOUT(.w = vv_fixed(46), .h = vv_fixed(26), .focusable = true),
-      VV_STYLE(.bg = value ? t->accent : t->track, .radius = vv_r(13)));
+      VV_STYLE(.bg = value ? t->accent : t->track, .radius = vv_r(13),
+               .focus = &focus));
   vv_box_keyed(ctx, "knob", 4,
                VV_LAYOUT(.w = vv_fixed(20), .h = vv_fixed(20),
                          .has_absolute = true,
@@ -139,30 +145,26 @@ uint32_t vv_toggle(vv_Ctx *ctx, const char *key, bool value, vv_Msg change) {
 uint32_t vv_checkbox(vv_Ctx *ctx, const char *key, const char *label,
                      bool value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  vv_Style cbfocus = {
-      .border_color = t->accent, .border_width = vv_all(2), .radius = vv_r(6)};
-  uint32_t row = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                              VV_LAYOUT(.dir = VV_ROW,
-                                              .gap = 10,
-                                              .cross = VV_ALIGN_CENTER,
-                                              .padding = vv_hv(2, 2),
-                                              .focusable = true),
-                              VV_STYLE(.focus = &cbfocus));
+  vv_Style cbfocus = {.ring_color = t->border_focus, .ring_width = 2,
+                      .ring_offset = 2, .set = VV_STYLE_RING};
+  uint32_t row =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.dir = VV_ROW, .gap = 10, .cross = VV_ALIGN_CENTER,
+                             .padding = vv_hv(2, 2), .focusable = true),
+                   VV_STYLE(.focus = &cbfocus));
   {
-    vv_box_keyed(ctx, "box", 3,
-                 VV_LAYOUT(.w = vv_fixed(20), .h = vv_fixed(20)),
+    vv_box_keyed(ctx, "box", 3, VV_LAYOUT(.w = vv_fixed(20), .h = vv_fixed(20)),
                  VV_STYLE(.bg = value ? t->accent : t->surface_hi,
-                            .radius = vv_r(5),
-                            .border_width = vv_all(t->border_width),
-                            .border_color = value ? t->accent : t->border));
+                          .radius = vv_r(5),
+                          .border_width = vv_all(t->border_width),
+                          .border_color = value ? t->accent : t->border));
     {
       if (value) {
         // A simple checkmark drawn as a small rotated bar pair via a box.
         vv_box_keyed(ctx, "tick", 9,
-                     VV_LAYOUT(.w = vv_fixed(10),
-                                     .h = vv_fixed(10),
-                                     .has_absolute = true,
-                                     .absolute = vv_rect(5, 5, 10, 10)),
+                     VV_LAYOUT(.w = vv_fixed(10), .h = vv_fixed(10),
+                               .has_absolute = true,
+                               .absolute = vv_rect(5, 5, 10, 10)),
                      VV_STYLE(.bg = t->on_accent, .radius = vv_r(2)));
         vv_end_box(ctx);
       }
@@ -201,12 +203,11 @@ static SliderResult slider_core(vv_Ctx *ctx, const char *key, float value,
   // inside a FIT parent (a bare row): with min 0 it would collapse to width 0,
   // the visuals would fall back to a fixed width, and the drag math below —
   // gated on actual width — would silently never fire (§8.2).
-  uint32_t track = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                                VV_LAYOUT(.w = {VV_SIZE_GROW, 1, 160, 0},
-                                                .h = vv_fixed(28),
-                                                .focusable = true,
-                                                .cross = VV_ALIGN_CENTER),
-                                VV_STYLE(0));
+  uint32_t track =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.w = {VV_SIZE_GROW, 1, 160, 0}, .h = vv_fixed(28),
+                             .focusable = true, .cross = VV_ALIGN_CENTER),
+                   VV_STYLE(0));
 
   // Interaction: while active, map pointer x within the track to a value. Uses
   // last frame's track geometry (the §4.5 lag) — invisible at speed.
@@ -233,31 +234,28 @@ static SliderResult slider_core(vv_Ctx *ctx, const char *key, float value,
   {
     // Rail.
     vv_box_keyed(ctx, "rail", 1,
-                 VV_LAYOUT(.w = vv_grow(1),
-                                 .h = vv_fixed(6),
-                                 .has_absolute = true,
-                                 .absolute = vv_rect(0, 11, tw, 6)),
+                 VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(6),
+                           .has_absolute = true,
+                           .absolute = vv_rect(0, 11, tw, 6)),
                  VV_STYLE(.bg = t->track, .radius = vv_r(3)));
     vv_end_box(ctx);
     // Filled portion.
-    vv_box_keyed(ctx, "fill", 2,
-                 VV_LAYOUT(.has_absolute = true,
-                                 .absolute = vv_rect(0, 11, hx + 9, 6)),
-                 VV_STYLE(.bg = t->accent, .radius = vv_r(3)));
+    vv_box_keyed(
+        ctx, "fill", 2,
+        VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(0, 11, hx + 9, 6)),
+        VV_STYLE(.bg = t->accent, .radius = vv_r(3)));
     vv_end_box(ctx);
     // Handle (springs along x via FLIP when value jumps).
     vv_Style hhover = {.bg = t->accent_hi};
     vv_box_keyed(ctx, "handle", 3,
-                 VV_LAYOUT(.w = vv_fixed(18),
-                                 .h = vv_fixed(18),
-                                 .has_absolute = true,
-                                 .absolute = vv_rect(hx, 5, 18, 18)),
-                 VV_STYLE(.bg = t->knob,
-                            .radius = vv_r(9),
-                            .shadow = {.color = vv_rgba(0, 0, 0, 0.3f),
-                                       .offset = vv_v2(0, 2),
-                                       .blur = 6},
-                            .hover = &hhover));
+                 VV_LAYOUT(.w = vv_fixed(18), .h = vv_fixed(18),
+                           .has_absolute = true,
+                           .absolute = vv_rect(hx, 5, 18, 18)),
+                 VV_STYLE(.bg = t->knob, .radius = vv_r(9),
+                          .shadow = {.color = vv_rgba(0, 0, 0, 0.3f),
+                                     .offset = vv_v2(0, 2),
+                                     .blur = 6},
+                          .hover = &hhover));
     vv_end_box(ctx);
   }
   vv_end_box(ctx);
@@ -311,18 +309,14 @@ static SliderResult drag_core(vv_Ctx *ctx, const char *key, float value,
                               float speed, float min, float max) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.w = vv_fixed(90),
-                                             .h = vv_fixed(32),
-                                             .padding = vv_hv(10, 6),
-                                             .main = VV_ALIGN_CENTER,
-                                             .cross = VV_ALIGN_CENTER,
-                                             .focusable = true),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .hover = &hover));
+  uint32_t id =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.w = vv_fixed(90), .h = vv_fixed(32),
+                             .padding = vv_hv(10, 6), .main = VV_ALIGN_CENTER,
+                             .cross = VV_ALIGN_CENTER, .focusable = true),
+                   VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                            .border_width = vv_all(t->border_width),
+                            .border_color = t->border, .hover = &hover));
 
   DragState *st = vv_state(ctx, id, DragState);
   float out = value;
@@ -342,9 +336,8 @@ static SliderResult drag_core(vv_Ctx *ctx, const char *key, float value,
 
   char buf[32];
   snprintf(buf, sizeof buf, "%.2f", (double)out);
-  vv_text(
-      ctx, buf,
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, buf,
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
   vv_end_box(ctx);
   return (SliderResult){.id = id,
                         .value = out,
@@ -403,14 +396,80 @@ uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v) {
 }
 
 // ---- text field ----------------------------------------------------------
-// Single-line editor. stb_textedit (§10.3) is the richer upgrade path; this
-// hand-rolled version covers what visualizer UIs and the 7GUIs tasks need:
-// insertion, deletion, arrow/home/end navigation, shift-selection, clipboard,
-// and an animated caret (§10.3 — the glide reads as high quality).
+// Single-line editor: insertion, deletion, arrow/home/end navigation, word
+// delete, shift-selection, clipboard, an animated caret (§10.3), and inline
+// undo/redo. stb_textedit was the notional upgrade path, but it indexes by
+// char/codepoint and would fight this editor's UTF-8 grapheme model (a correct
+// integration needs a parallel codepoint buffer). Everything it offers here is
+// already covered except undo, which we add below the idiomatic Verve way —
+// a compact snapshot history that needs no heap and no vendored dependency.
+
+#define TF_UNDO_CAP 256 // longest buffer (bytes) an undo step records
+#define TF_UNDO_N   10  // undo/redo ring depth
+
+typedef struct { int len, cursor; char text[TF_UNDO_CAP]; } TFSnap;
+
+// Edit kinds, so consecutive same-kind edits coalesce into one undo step
+// (typing a word undoes as a unit, a run of backspaces undoes as a unit).
+enum { TF_K_NONE = 0, TF_K_TYPE, TF_K_DEL, TF_K_OTHER };
 
 typedef struct {
-  int cursor, anchor; // byte offsets into buf
+  int cursor, anchor; // byte offsets into buf (must stay first — TextAreaState
+                      // overlays these two fields via a cast)
+  // Inline undo/redo: two snapshot rings, no heap — the node pool owns this
+  // block and frees it with the widget. Buffers longer than TF_UNDO_CAP simply
+  // aren't recorded (undo becomes a no-op for that oversized state).
+  TFSnap undo[TF_UNDO_N], redo[TF_UNDO_N];
+  int  un, rn;        // ring depths
+  int  last_kind;     // for coalescing
+  bool brk;           // force a new undo group on the next edit (word boundary)
 } TextFieldState;
+
+// Snapshot the buffer + caret; false if too long to record.
+static bool tf_snap(TFSnap *d, const char *buf, int len, int cursor) {
+  if (len < 0 || len >= TF_UNDO_CAP) return false;
+  d->len = len; d->cursor = cursor;
+  memcpy(d->text, buf, (size_t)len); d->text[len] = 0;
+  return true;
+}
+static void tf_push(TFSnap *stack, int *n, const char *buf, int len, int cursor) {
+  TFSnap tmp;
+  if (!tf_snap(&tmp, buf, len, cursor)) return;
+  if (*n > 0 && stack[*n - 1].len == len &&
+      memcmp(stack[*n - 1].text, buf, (size_t)len) == 0)
+    return; // identical to the top — nothing to record
+  if (*n == TF_UNDO_N) { memmove(stack, stack + 1, sizeof(TFSnap) * (TF_UNDO_N - 1)); (*n)--; }
+  stack[(*n)++] = tmp;
+}
+// Record a pre-edit checkpoint (call just before a mutation). Runs of the same
+// kind with no intervening boundary coalesce into a single undo step.
+static void tf_checkpoint(TextFieldState *s, const char *buf, int len, int kind) {
+  if (kind != s->last_kind || s->brk) {
+    tf_push(s->undo, &s->un, buf, len, s->cursor);
+    s->rn = 0; // a fresh edit discards the redo future
+  }
+  s->last_kind = kind;
+  s->brk = false;
+}
+static void tf_apply(const TFSnap *sn, char *buf, int *len, TextFieldState *s) {
+  memcpy(buf, sn->text, (size_t)sn->len); buf[sn->len] = 0;
+  *len = sn->len;
+  s->cursor = s->anchor = sn->cursor > sn->len ? sn->len : sn->cursor;
+}
+static bool tf_undo(TextFieldState *s, char *buf, int *len) {
+  if (s->un == 0) return false;
+  tf_push(s->redo, &s->rn, buf, *len, s->cursor); // current -> redo
+  tf_apply(&s->undo[--s->un], buf, len, s);
+  s->last_kind = TF_K_NONE;
+  return true;
+}
+static bool tf_redo(TextFieldState *s, char *buf, int *len) {
+  if (s->rn == 0) return false;
+  tf_push(s->undo, &s->un, buf, *len, s->cursor); // current -> undo
+  tf_apply(&s->redo[--s->rn], buf, len, s);
+  s->last_kind = TF_K_NONE;
+  return true;
+}
 
 static float measure_prefix(vv_Ctx *ctx, const char *buf, int n, float size) {
   if (n <= 0)
@@ -598,21 +657,14 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
 
   vv_Style hover = {.bg = t->surface_hi};
   vv_Style focus = {.border_color = t->accent}; // declarative → animates
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.dir = VV_ROW,
-                                             .w = vv_grow(1),
-                                             .h = vv_fixed(34),
-                                             .padding = vv_hv(t->pad_x, 0),
-                                             .cross = VV_ALIGN_CENTER,
-                                             .focusable = true,
-                                             .cursor = VV_CURSOR_TEXT,
-                                             .clip = true),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .hover = &hover,
-                                        .focus = &focus));
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                .padding = vv_hv(t->pad_x, 0), .cross = VV_ALIGN_CENTER,
+                .focusable = true, .cursor = VV_CURSOR_TEXT, .clip = true),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border, .hover = &hover, .focus = &focus));
 
   bool focused = vv_focused(ctx, id);
   TextFieldState *s = vv_state(ctx, id, TextFieldState);
@@ -633,11 +685,31 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
 
   if (focused) {
     if (ctx->input.text_len > 0) {
+      tf_checkpoint(s, buf, len, TF_K_TYPE);
       insert_text(buf, &len, cap, s, ctx->input.text, ctx->input.text_len);
+      // A whitespace boundary ends the undo group, so undo is word-granular.
+      for (int i = 0; i < ctx->input.text_len; i++) {
+        char ch = ctx->input.text[i];
+        if (ch == ' ' || ch == '\n' || ch == '\t') s->brk = true;
+      }
       changed = true;
     }
-    for (int i = 0; i < ctx->input.key_count; i++)
-      changed |= handle_key(ctx, buf, &len, cap, s, ctx->input.keys[i]);
+    for (int i = 0; i < ctx->input.key_count; i++) {
+      vv_KeyEvent ev = ctx->input.keys[i];
+      // Undo / redo (Ctrl+Z, Ctrl+Shift+Z). No VV_KEY_Y in the enum, so redo
+      // rides Shift+Z rather than adding a keycode.
+      if (ev.ctrl && ev.key == VV_KEY_Z) {
+        changed |= ev.shift ? tf_redo(s, buf, &len) : tf_undo(s, buf, &len);
+        continue;
+      }
+      // Checkpoint before a mutating key; identical snapshots are skipped, so a
+      // no-op key (Backspace at column 0) costs nothing.
+      if (ev.key == VV_KEY_BACKSPACE || ev.key == VV_KEY_DELETE)
+        tf_checkpoint(s, buf, len, TF_K_DEL);
+      else if (ev.ctrl && (ev.key == VV_KEY_V || ev.key == VV_KEY_X))
+        tf_checkpoint(s, buf, len, TF_K_OTHER);
+      changed |= handle_key(ctx, buf, &len, cap, s, ev);
+    }
   }
   if (s->cursor > len)
     s->cursor = len;
@@ -657,11 +729,11 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
     vv_box_keyed(
         ctx, "sel", 3,
         VV_LAYOUT(.has_absolute = true,
-                        .absolute = vv_rect(lo, 6, hi - lo, 22)),
+                  .absolute = vv_rect(lo, 6, hi - lo, 22)),
         // Snap the rect (§6.4.1): the selection is dragged continuously, so a
         // FLIP spring would make the highlight glide/lag behind the pointer.
         VV_STYLE(.bg = vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.35f),
-                   .radius = vv_r(3), .transition_mask = VV_INSTANT_RECT));
+                 .radius = vv_r(3), .transition_mask = VV_INSTANT_RECT));
     vv_end_box(ctx);
   }
 
@@ -676,15 +748,14 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
         VV_STYLE(.fg = t->text_muted, .font_size = size, .font = t->font));
   else
     vv_text_keyed(ctx, "body", 4, buf,
-            VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
+                  VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
 
   // Caret.
   if (focused) {
     vv_box_keyed(ctx, "caret", 7,
-                 VV_LAYOUT(.w = vv_fixed(2),
-                                 .h = vv_fixed(20),
-                                 .has_absolute = true,
-                                 .absolute = vv_rect(cx, 7, 2, 20)),
+                 VV_LAYOUT(.w = vv_fixed(2), .h = vv_fixed(20),
+                           .has_absolute = true,
+                           .absolute = vv_rect(cx, 7, 2, 20)),
                  VV_STYLE(.bg = t->accent, .radius = vv_r(1)));
     vv_end_box(ctx);
   }
@@ -692,12 +763,11 @@ uint32_t vv_text_field(vv_Ctx *ctx, const char *key, char *buf, int cap,
   // IME preedit: the in-progress composition, drawn (underlined) at the caret
   // but not committed to `buf` — SDL delivers it via vv_Input.preedit.
   if (focused && ctx->input.preedit_len > 0) {
-    vv_box_keyed(ctx, "ime", 3,
-                 VV_LAYOUT(.has_absolute = true,
-                                 .absolute = vv_rect(cx + 2, 4, 0, 26)),
-                 VV_STYLE(.bg = {0},
-                            .border_width = (vv_Edges){0, 0, 0, 2},
-                            .border_color = t->accent));
+    vv_box_keyed(
+        ctx, "ime", 3,
+        VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(cx + 2, 4, 0, 26)),
+        VV_STYLE(.bg = {0}, .border_width = (vv_Edges){0, 0, 0, 2},
+                 .border_color = t->accent));
     vv_text(ctx, ctx->input.preedit,
             VV_STYLE(.fg = t->accent_hi, .font_size = size, .font = t->font));
     vv_end_box(ctx);
@@ -715,23 +785,19 @@ uint32_t vv_list_item(vv_Ctx *ctx, const char *key, const char *label,
                       bool selected, vv_Msg click, vv_Payload arg) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
-  vv_Style focus = {.border_color = t->accent, .border_width = vv_all(2)};
-  uint32_t id =
-      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                   VV_LAYOUT(.dir = VV_ROW,
-                                   .w = vv_grow(1),
-                                   .h = vv_fixed(34),
-                                   .padding = vv_hv(12, 0),
-                                   .cross = VV_ALIGN_CENTER,
-                                   .focusable = true),
-                   VV_STYLE(.bg = selected ? t->accent_lo : t->surface,
-                              .radius = vv_r(6),
-                              .hover = selected ? NULL : &hover,
-                              .focus = &focus));
+  // Inset ring (offset -2) so a focused row's ring stays inside the list.
+  vv_Style focus = {.ring_color = t->border_focus, .ring_width = 2,
+                    .ring_offset = -2, .set = VV_STYLE_RING};
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                .padding = vv_hv(12, 0), .cross = VV_ALIGN_CENTER,
+                .focusable = true),
+      VV_STYLE(.bg = selected ? t->accent_lo : t->surface, .radius = vv_r(6),
+               .hover = selected ? NULL : &hover, .focus = &focus));
   vv_text(ctx, label,
           VV_STYLE(.fg = selected ? t->on_accent : t->text,
-                     .font_size = t->font_size,
-                     .font = t->font));
+                   .font_size = t->font_size, .font = t->font));
   vv_end_box(ctx);
   if (vv_clicked(ctx, id) || vv_activated(ctx, id))
     vv_emit(ctx, click, arg);
@@ -899,29 +965,27 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
   vv_Style focus = {.border_color = t->accent};
   // height <= 0 means "grow to fill the parent" (a full-pane editor).
   vv_Size vh = height > 0 ? vv_fixed(height) : vv_grow(1);
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.dir = VV_COLUMN,
-                                             .w = vv_grow(1),
-                                             .h = vh,
-                                             .padding = vv_all(pad),
-                                             .focusable = true,
-                                             .cursor = VV_CURSOR_TEXT,
-                                             .clip = true,
-                                             .scroll_y = true),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .focus = &focus));
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vh,
+                .padding = vv_all(pad), .focusable = true,
+                .cursor = VV_CURSOR_TEXT, .clip = true, .scroll_y = true),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border, .focus = &focus));
   bool focused = vv_focused(ctx, id);
   TextAreaState *s = vv_state(ctx, id, TextAreaState);
   TextFieldState *ts = (TextFieldState *)s;
   bool changed = false;
 
-  vv_Rect fr = vv_node(ctx, id)->actual_rect;
-  float text_x0 = fr.x + pad;
-  float text_y0 =
-      fr.y + pad; // scroll offset is small; approximate hit for click
+  // Text origin in window space. The content (text, caret, selection) is laid
+  // out content-relative and then shifted by the node's scroll offset in the
+  // present pass, so the hit test must subtract that same offset — otherwise
+  // clicks land on the wrong line/column once the field is scrolled.
+  vv_Node *node = vv_node(ctx, id);
+  vv_Rect fr = node->actual_rect;
+  float text_x0 = fr.x + pad - node->scroll_x.x;
+  float text_y0 = fr.y + pad - node->scroll_y.x;
   // Map a mouse point to a caret index: pick the visual line, then the column.
   // Shared by press (sets caret + anchor) and drag (extends the selection).
   if (vv_pressed(ctx, id) || vv_active(ctx, id)) {
@@ -978,14 +1042,13 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
       const char *skey = vv_fmt(ctx, "sel%d", li);
       vv_box_keyed(
           ctx, skey, strlen(skey),
-          VV_LAYOUT(
-              .has_absolute = true,
-              // absolute is content-relative (post-padding), so no extra pad
-              .absolute = vv_rect(ax, ly, bx - ax + extra, line_h)),
+          VV_LAYOUT(.has_absolute = true,
+                    // absolute is content-relative (post-padding), so no extra
+                    // pad
+                    .absolute = vv_rect(ax, ly, bx - ax + extra, line_h)),
           // Snap: dragged continuously, so no FLIP glide (§6.4.1).
-          VV_STYLE(.bg =
-                         vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.30f),
-                     .radius = vv_r(2), .transition_mask = VV_INSTANT_RECT));
+          VV_STYLE(.bg = vv_rgba(t->accent.r, t->accent.g, t->accent.b, 0.30f),
+                   .radius = vv_r(2), .transition_mask = VV_INSTANT_RECT));
       vv_end_box(ctx);
       if (le >= len)
         break;
@@ -1003,7 +1066,7 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
         VV_STYLE(.fg = t->text_muted, .font_size = size, .font = t->font));
   else
     vv_text_keyed(ctx, "body", 4, buf,
-            VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
+                  VV_STYLE(.fg = t->text, .font_size = size, .font = t->font));
 
   // Caret at (column x, line y).
   if (focused) {
@@ -1011,23 +1074,20 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
     float cx = measure_prefix(ctx, buf + ls, ts->cursor - ls, size);
     float cy = (float)ml_line_index(buf, ts->cursor) * line_h;
     vv_box_keyed(ctx, "caret", 7,
-                 VV_LAYOUT(.w = vv_fixed(2),
-                                 .h = vv_fixed(line_h),
-                                 .has_absolute = true,
-                                 .absolute = vv_rect(cx, cy, 2, line_h)),
+                 VV_LAYOUT(.w = vv_fixed(2), .h = vv_fixed(line_h),
+                           .has_absolute = true,
+                           .absolute = vv_rect(cx, cy, 2, line_h)),
                  VV_STYLE(.bg = t->accent, .radius = vv_r(1)));
     vv_end_box(ctx);
     if (ctx->input.preedit_len > 0) { // IME composition at the caret
       vv_box_keyed(ctx, "ime", 3,
                    VV_LAYOUT(.has_absolute = true,
-                                   .absolute = vv_rect(cx + 2, cy, 0, line_h),
-                                   .cross = VV_ALIGN_CENTER),
-                   VV_STYLE(.bg = {0},
-                              .border_width = (vv_Edges){0, 0, 0, 2},
-                              .border_color = t->accent));
-      vv_text(
-          ctx, ctx->input.preedit,
-          VV_STYLE(.fg = t->accent_hi, .font_size = size, .font = t->font));
+                             .absolute = vv_rect(cx + 2, cy, 0, line_h),
+                             .cross = VV_ALIGN_CENTER),
+                   VV_STYLE(.bg = {0}, .border_width = (vv_Edges){0, 0, 0, 2},
+                            .border_color = t->accent));
+      vv_text(ctx, ctx->input.preedit,
+              VV_STYLE(.fg = t->accent_hi, .font_size = size, .font = t->font));
       vv_end_box(ctx);
     }
   }
@@ -1049,14 +1109,11 @@ uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir, bool trailing,
   bool horiz = (dir == VV_ROW);
   vv_Style hover = {.bg = t->accent};
   vv_Style active = {.bg = t->accent_hi};
-  vv_LayoutDecl d = horiz ? VV_LAYOUT(.w = vv_fixed(6),
-                                            .h = vv_grow(1),
-                                            .focusable = true,
-                                            .cursor = VV_CURSOR_RESIZE_H)
-                          : VV_LAYOUT(.w = vv_grow(1),
-                                            .h = vv_fixed(6),
-                                            .focusable = true,
-                                            .cursor = VV_CURSOR_RESIZE_V);
+  vv_LayoutDecl d =
+      horiz ? VV_LAYOUT(.w = vv_fixed(6), .h = vv_grow(1), .focusable = true,
+                        .cursor = VV_CURSOR_RESIZE_H)
+            : VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(6), .focusable = true,
+                        .cursor = VV_CURSOR_RESIZE_V);
   uint32_t id = vv_box_keyed(
       ctx, key, strlen(key), d,
       VV_STYLE(.bg = t->border, .hover = &hover, .active = &active));
@@ -1090,16 +1147,12 @@ static bool
 
 void vv_menubar_begin(vv_Ctx *ctx) {
   const vv_Theme *t = vv_theme();
-  vv_box_keyed(ctx, "__menubar", 9,
-               VV_LAYOUT(.dir = VV_ROW,
-                               .w = vv_grow(1),
-                               .h = vv_fixed(34),
-                               .cross = VV_ALIGN_CENTER,
-                               .padding = vv_hv(6, 0),
-                               .gap = 2),
-               VV_STYLE(.bg = t->surface,
-                          .border_width = (vv_Edges){0, 0, 0, 1},
-                          .border_color = t->border));
+  vv_box_keyed(
+      ctx, "__menubar", 9,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                .cross = VV_ALIGN_CENTER, .padding = vv_hv(6, 0), .gap = 2),
+      VV_STYLE(.bg = t->surface, .border_width = (vv_Edges){0, 0, 0, 1},
+               .border_color = t->border));
 }
 void vv_menubar_end(vv_Ctx *ctx) { vv_end_box(ctx); }
 
@@ -1107,13 +1160,11 @@ uint32_t vv_menu_title(vv_Ctx *ctx, const char *key, const char *label) {
   const vv_Theme *t = vv_theme();
   // Resolve open state before styling: needs this node's stable id, which we
   // get from the handle after opening. Open one frame late is invisible here.
-  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
-                             VV_LAYOUT(.dir = VV_ROW,
-                                             .h = vv_fixed(24),
-                                             .cross = VV_ALIGN_CENTER,
-                                             .padding = vv_hv(10, 0),
-                                             .focusable = true),
-                             VV_STYLE(.radius = vv_r(6)));
+  uint32_t id = vv_box_keyed(
+      ctx, key, strlen(key),
+      VV_LAYOUT(.dir = VV_ROW, .h = vv_fixed(24), .cross = VV_ALIGN_CENTER,
+                .padding = vv_hv(10, 0), .focusable = true),
+      VV_STYLE(.radius = vv_r(6)));
   vv_ID nid = vv_node(ctx, id)->id;
   bool open = (g_open_menu == nid);
   if (vv_clicked(ctx, id) || vv_activated(ctx, id))
@@ -1124,9 +1175,8 @@ uint32_t vv_menu_title(vv_Ctx *ctx, const char *key, const char *label) {
   open = (g_open_menu == nid);
   vv_Node *n = vv_node(ctx, id);
   n->target.bg = (open || vv_hovered(ctx, id)) ? t->surface_hi : (vv_Color){0};
-  vv_text(
-      ctx, label,
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, label,
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
   vv_end_box(ctx);
   return id;
 }
@@ -1138,12 +1188,11 @@ bool vv_menu_is_open(vv_Ctx *ctx, uint32_t title_id) {
 void vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at) {
   const vv_Theme *t = vv_theme();
   // Scrim: full-window catch so a click or Escape anywhere else dismisses.
-  uint32_t scrim = vv_box_keyed(
-      ctx, "__menuscrim", 11,
-      VV_LAYOUT(.has_absolute = true,
-                      .z = VV_Z_MENU,
-                      .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
-      VV_STYLE(.bg = {0}));
+  uint32_t scrim =
+      vv_box_keyed(ctx, "__menuscrim", 11,
+                   VV_LAYOUT(.has_absolute = true, .z = VV_Z_MENU,
+                             .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
+                   VV_STYLE(.bg = {0}));
   if (vv_pressed(ctx, scrim))
     g_open_menu = 0;
   vv_end_box(ctx);
@@ -1152,46 +1201,37 @@ void vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at) {
       g_open_menu = 0;
 
   vv_box_keyed(ctx, key, strlen(key),
-               VV_LAYOUT(.dir = VV_COLUMN,
-                               .w = vv_fixed(220),
-                               .padding = vv_all(5),
-                               .gap = 1,
-                               .has_absolute = true,
-                               .z = VV_Z_MENU,
-                               .absolute = vv_rect(at.x, at.y + 2, 220, 0)),
-               VV_STYLE(.bg = t->surface_hi,
-                          .radius = vv_r(8),
-                          .border_width = vv_all(t->border_width),
-                          .border_color = t->border,
-                          .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
-                                     .offset = vv_v2(0, 6),
-                                     .blur = 18,
-                                     .spread = 2}));
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(220),
+                         .padding = vv_all(5), .gap = 1, .has_absolute = true,
+                         .z = VV_Z_MENU,
+                         .absolute = vv_rect(at.x, at.y + 2, 220, 0)),
+               VV_STYLE(.bg = t->surface_hi, .radius = vv_r(8),
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                   .offset = vv_v2(0, 6),
+                                   .blur = 18,
+                                   .spread = 2}));
 }
 
 bool vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
                   const char *shortcut) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->accent};
-  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
-                             VV_LAYOUT(.dir = VV_ROW,
-                                             .w = vv_grow(1),
-                                             .h = vv_fixed(28),
-                                             .cross = VV_ALIGN_CENTER,
-                                             .main = VV_ALIGN_SPACE_BETWEEN,
-                                             .padding = vv_hv(10, 0),
-                                             .focusable = true),
-                             VV_STYLE(.radius = vv_r(5), .hover = &hover));
+  uint32_t id = vv_box_keyed(
+      ctx, key, strlen(key),
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(28),
+                .cross = VV_ALIGN_CENTER, .main = VV_ALIGN_SPACE_BETWEEN,
+                .padding = vv_hv(10, 0), .focusable = true),
+      VV_STYLE(.radius = vv_r(5), .hover = &hover));
   bool hot = vv_hovered(ctx, id);
   vv_text(ctx, label,
           VV_STYLE(.fg = hot ? t->on_accent : t->text,
-                     .font_size = t->font_size,
-                     .font = t->font));
+                   .font_size = t->font_size, .font = t->font));
   if (shortcut && shortcut[0])
     vv_text(ctx, shortcut,
             VV_STYLE(.fg = hot ? t->on_accent : t->text_muted,
-                       .font_size = t->font_size - 2,
-                       .font = t->font));
+                     .font_size = t->font_size - 2, .font = t->font));
   vv_end_box(ctx);
   bool clicked = vv_clicked(ctx, id) || vv_activated(ctx, id);
   if (clicked) {
@@ -1204,10 +1244,10 @@ bool vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
 
 void vv_menu_separator(vv_Ctx *ctx) {
   const vv_Theme *t = vv_theme();
-  vv_box_keyed(ctx, "__sep", 5,
-               VV_LAYOUT(
-                   .w = vv_grow(1), .h = vv_fixed(1), .padding = vv_hv(4, 0)),
-               VV_STYLE(.bg = t->border));
+  vv_box_keyed(
+      ctx, "__sep", 5,
+      VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(1), .padding = vv_hv(4, 0)),
+      VV_STYLE(.bg = t->border));
   vv_end_box(ctx);
 }
 
@@ -1219,28 +1259,23 @@ static void popover_panel(vv_Ctx *ctx, const char *key, vv_Vec2 at,
                           float width) {
   const vv_Theme *t = vv_theme();
   vv_box_keyed(ctx, key, strlen(key),
-               VV_LAYOUT(.dir = VV_COLUMN,
-                               .w = vv_fixed(width),
-                               .padding = vv_all(14),
-                               .gap = 10,
-                               .has_absolute = true,
-                               .z = VV_Z_POPOVER,
-                               .absolute = vv_rect(at.x, at.y, width, 0)),
-               VV_STYLE(.bg = t->surface_hi,
-                          .radius = vv_r(10),
-                          .border_width = vv_all(t->border_width),
-                          .border_color = t->border,
-                          .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
-                                     .offset = vv_v2(0, 8),
-                                     .blur = 22,
-                                     .spread = 2}));
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(width),
+                         .padding = vv_all(14), .gap = 10, .has_absolute = true,
+                         .z = VV_Z_POPOVER,
+                         .absolute = vv_rect(at.x, at.y, width, 0)),
+               VV_STYLE(.bg = t->surface_hi, .radius = vv_r(10),
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                   .offset = vv_v2(0, 8),
+                                   .blur = 22,
+                                   .spread = 2}));
 }
 static uint32_t popover_scrim(vv_Ctx *ctx) {
   return vv_box_keyed(
       ctx, "__povscrim", 10,
-      VV_LAYOUT(.has_absolute = true,
-                      .z = VV_Z_POPOVER,
-                      .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
+      VV_LAYOUT(.has_absolute = true, .z = VV_Z_POPOVER,
+                .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
       VV_STYLE(.bg = {0}));
 }
 static bool escape_pressed(vv_Ctx *ctx) {
@@ -1276,14 +1311,15 @@ bool vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
   vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .clip = true),
                VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
-                          .border_width = vv_all(t->border_width), .border_color = t->border));
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border));
 
   vv_Style hhover = {.bg = t->surface_hi};
-  uint32_t hdr = vv_box_keyed(ctx, "hdr", 3,
-                              VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1),
-                                              .cross = VV_ALIGN_CENTER, .gap = 8,
-                                              .padding = vv_hv(12, 10), .focusable = true),
-                              VV_STYLE(.radius = vv_r(t->radius), .hover = &hhover));
+  uint32_t hdr = vv_box_keyed(
+      ctx, "hdr", 3,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
+                .gap = 8, .padding = vv_hv(12, 10), .focusable = true),
+      VV_STYLE(.radius = vv_r(t->radius), .hover = &hhover));
   // ▸ when closed, ▼ when open.
   vv_text(ctx, open ? "\xe2\x96\xbc" : "\xe2\x96\xb8",
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
@@ -1296,7 +1332,7 @@ bool vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
     // Body: caller builds content here, then calls vv_collapsible_end.
     vv_box_keyed(ctx, "body", 4,
                  VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .gap = 8,
-                                 .padding = (vv_Edges){12, 0, 12, 12}, .clip = true),
+                           .padding = (vv_Edges){12, 0, 12, 12}, .clip = true),
                  VV_STYLE(0));
     return true;
   }
@@ -1313,22 +1349,25 @@ void vv_modal_begin(vv_Ctx *ctx, const char *key, float width, vv_Msg close) {
   const vv_Theme *t = vv_theme();
   // A full-window scrim that also centers the panel (child). Pressing the scrim
   // (i.e. outside the panel) or Escape dismisses. z-lifts above normal content.
-  uint32_t scrim = vv_box_keyed(
-      ctx, "__modal", 7,
-      VV_LAYOUT(.has_absolute = true, .z = VV_Z_POPOVER,
-                      .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
-                      .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
-      VV_STYLE(.bg = vv_rgba(0, 0, 0, 0.45f)));
+  uint32_t scrim =
+      vv_box_keyed(ctx, "__modal", 7,
+                   VV_LAYOUT(.has_absolute = true, .z = VV_Z_POPOVER,
+                             .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER,
+                             .absolute = vv_rect(0, 0, ctx->win_w, ctx->win_h)),
+                   VV_STYLE(.bg = vv_rgba(0, 0, 0, 0.45f)));
   if (vv_pressed(ctx, scrim) || escape_pressed(ctx))
     vv_emit(ctx, close, VV_NO_PAYLOAD);
   // The panel.
   vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(width),
-                               .padding = vv_all(20), .gap = 14),
+                         .padding = vv_all(20), .gap = 14),
                VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
-                          .border_width = vv_all(t->border_width), .border_color = t->border,
-                          .shadow = {.color = vv_rgba(0, 0, 0, 0.45f),
-                                     .offset = vv_v2(0, 12), .blur = 32, .spread = 4}));
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.45f),
+                                   .offset = vv_v2(0, 12),
+                                   .blur = 32,
+                                   .spread = 4}));
 }
 void vv_modal_end(vv_Ctx *ctx) {
   vv_end_box(ctx); // panel
@@ -1356,20 +1395,17 @@ void vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text) {
   vv_Rect r = vv_node(ctx, target_id)->actual_rect;
   float tx = r.x, ty = r.y + r.h + 6.0f;
   vv_box_keyed(ctx, vv_fmt(ctx, "__tip%u", target_id), 0,
-               VV_LAYOUT(.padding = vv_hv(9, 5),
-                               .has_absolute = true,
-                               .z = VV_Z_TOOLTIP,
-                               .absolute = vv_rect(tx, ty, 0, 0)),
-               VV_STYLE(.bg = vv_rgb(0.06f, 0.07f, 0.09f),
-                          .radius = vv_r(6),
-                          .border_width = vv_all(t->border_width),
-                          .border_color = t->border,
-                          .shadow = {.color = vv_rgba(0, 0, 0, 0.3f),
-                                     .offset = vv_v2(0, 3),
-                                     .blur = 10}));
-  vv_text(ctx, text,
-          VV_STYLE(
-              .fg = t->text, .font_size = t->font_size - 1, .font = t->font));
+               VV_LAYOUT(.padding = vv_hv(9, 5), .has_absolute = true,
+                         .z = VV_Z_TOOLTIP, .absolute = vv_rect(tx, ty, 0, 0)),
+               VV_STYLE(.bg = vv_rgb(0.06f, 0.07f, 0.09f), .radius = vv_r(6),
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.3f),
+                                   .offset = vv_v2(0, 3),
+                                   .blur = 10}));
+  vv_text(
+      ctx, text,
+      VV_STYLE(.fg = t->text, .font_size = t->font_size - 1, .font = t->font));
   vv_end_box(ctx);
 }
 
@@ -1406,19 +1442,15 @@ typedef struct {
 static bool day_cell(vv_Ctx *ctx, int day, bool selected) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface};
-  uint32_t id =
-      vv_box_keyed(ctx, vv_fmt(ctx, "d%d", day), 0,
-                   VV_LAYOUT(.w = vv_fixed(32),
-                                   .h = vv_fixed(28),
-                                   .main = VV_ALIGN_CENTER,
-                                   .cross = VV_ALIGN_CENTER,
-                                   .focusable = true),
-                   VV_STYLE(.bg = selected ? t->accent : (vv_Color){0},
-                              .radius = vv_r(6),
-                              .hover = selected ? NULL : &hover));
+  uint32_t id = vv_box_keyed(
+      ctx, vv_fmt(ctx, "d%d", day), 0,
+      VV_LAYOUT(.w = vv_fixed(32), .h = vv_fixed(28), .main = VV_ALIGN_CENTER,
+                .cross = VV_ALIGN_CENTER, .focusable = true),
+      VV_STYLE(.bg = selected ? t->accent : (vv_Color){0}, .radius = vv_r(6),
+               .hover = selected ? NULL : &hover));
   vv_text(ctx, vv_fmt(ctx, "%d", day),
           VV_STYLE(.fg = selected ? t->on_accent : t->text,
-                     .font_size = t->font_size - 1));
+                   .font_size = t->font_size - 1));
   vv_end_box(ctx);
   return vv_clicked(ctx, id);
 }
@@ -1426,13 +1458,11 @@ static bool day_cell(vv_Ctx *ctx, int day, bool selected) {
 static bool nav_button(vv_Ctx *ctx, const char *key, const char *glyph) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface};
-  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
-                             VV_LAYOUT(.w = vv_fixed(26),
-                                             .h = vv_fixed(24),
-                                             .main = VV_ALIGN_CENTER,
-                                             .cross = VV_ALIGN_CENTER,
-                                             .focusable = true),
-                             VV_STYLE(.radius = vv_r(6), .hover = &hover));
+  uint32_t id = vv_box_keyed(
+      ctx, key, strlen(key),
+      VV_LAYOUT(.w = vv_fixed(26), .h = vv_fixed(24), .main = VV_ALIGN_CENTER,
+                .cross = VV_ALIGN_CENTER, .focusable = true),
+      VV_STYLE(.radius = vv_r(6), .hover = &hover));
   vv_text(ctx, glyph, VV_STYLE(.fg = t->text, .font_size = t->font_size));
   vv_end_box(ctx);
   return vv_clicked(ctx, id);
@@ -1449,29 +1479,22 @@ uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date,
 
   vv_Style hover = {.bg = t->surface_hi};
   vv_Style focus = {.border_color = t->accent};
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.dir = VV_ROW,
-                                             .w = vv_grow(1),
-                                             .h = vv_fixed(34),
-                                             .cross = VV_ALIGN_CENTER,
-                                             .main = VV_ALIGN_SPACE_BETWEEN,
-                                             .padding = vv_hv(12, 0),
-                                             .focusable = true),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .hover = &hover,
-                                        .focus = &focus));
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                .cross = VV_ALIGN_CENTER, .main = VV_ALIGN_SPACE_BETWEEN,
+                .padding = vv_hv(12, 0), .focusable = true),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border, .hover = &hover, .focus = &focus));
   DateState *s = vv_state(ctx, id, DateState);
   if (!s->init) {
     s->vy = y;
     s->vm = m;
     s->init = true;
   }
-  vv_text(
-      ctx, vv_fmt(ctx, "%s %d, %d", MONTHS[m - 1], d, y),
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, vv_fmt(ctx, "%s %d, %d", MONTHS[m - 1], d, y),
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
   vv_text(ctx, "v",
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
   vv_end_box(ctx);
@@ -1497,7 +1520,8 @@ uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date,
                            .has_absolute = true, .z = VV_Z_POPOVER,
                            .absolute = vv_rect(fr.x, fr.y + fr.h + 4, W, 0)),
                  VV_STYLE(.bg = t->surface_hi, .radius = vv_r(10),
-                          .border_width = vv_all(t->border_width), .border_color = t->border,
+                          .border_width = vv_all(t->border_width),
+                          .border_color = t->border,
                           .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
                                      .offset = vv_v2(0, 8),
                                      .blur = 22,
@@ -1542,10 +1566,9 @@ uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date,
              VV_STYLE(.bg = {0})) {
         for (int wd = 0; wd < 7; wd++, day++) {
           if (day < 1 || day > dim) { // pad cell, keyed by grid slot
-            vv_box_keyed(
-                ctx, vv_fmt(ctx, "p%d", w * 7 + wd), 0,
-                VV_LAYOUT(.w = vv_fixed(cellw), .h = vv_fixed(28)),
-                VV_STYLE(.bg = {0}));
+            vv_box_keyed(ctx, vv_fmt(ctx, "p%d", w * 7 + wd), 0,
+                         VV_LAYOUT(.w = vv_fixed(cellw), .h = vv_fixed(28)),
+                         VV_STYLE(.bg = {0}));
             vv_end_box(ctx);
             continue;
           }
@@ -1568,37 +1591,30 @@ uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
                   bool selected, vv_Msg change, vv_Payload arg) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
-  vv_Style focus = {.border_color = t->accent, .border_width = vv_all(2)};
+  vv_Style focus = {.ring_color = t->border_focus, .ring_width = 2,
+                    .ring_offset = -2, .set = VV_STYLE_RING};
   uint32_t id = vv_box_keyed(
       ctx, key, key ? strlen(key) : 0,
-      VV_LAYOUT(.dir = VV_ROW,
-                      .h = vv_fixed(30),
-                      .cross = VV_ALIGN_CENTER,
-                      .gap = 8,
-                      .padding = vv_hv(6, 0),
-                      .focusable = true,
-                      .cursor = VV_CURSOR_POINTER),
+      VV_LAYOUT(.dir = VV_ROW, .h = vv_fixed(30), .cross = VV_ALIGN_CENTER,
+                .gap = 8, .padding = vv_hv(6, 0), .focusable = true,
+                .cursor = VV_CURSOR_POINTER),
       VV_STYLE(.radius = vv_r(6), .hover = &hover, .focus = &focus));
   // Outer ring.
   vv_box_keyed(ctx, "o", 1,
-               VV_LAYOUT(.w = vv_fixed(18),
-                               .h = vv_fixed(18),
-                               .main = VV_ALIGN_CENTER,
-                               .cross = VV_ALIGN_CENTER),
-               VV_STYLE(.bg = t->surface,
-                          .radius = vv_r(9),
-                          .border_width = vv_all(2),
-                          .border_color = selected ? t->accent : t->border));
+               VV_LAYOUT(.w = vv_fixed(18), .h = vv_fixed(18),
+                         .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER),
+               VV_STYLE(.bg = t->surface, .radius = vv_r(9),
+                        .border_width = vv_all(2),
+                        .border_color = selected ? t->accent : t->border));
   // Inner dot (grows in when selected — FLIP from 0).
   vv_box_keyed(ctx, "d", 1,
                VV_LAYOUT(.w = vv_fixed(selected ? 8 : 0),
-                               .h = vv_fixed(selected ? 8 : 0)),
+                         .h = vv_fixed(selected ? 8 : 0)),
                VV_STYLE(.bg = t->accent, .radius = vv_r(4)));
   vv_end_box(ctx);
   vv_end_box(ctx);
-  vv_text(
-      ctx, label,
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, label,
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
   vv_end_box(ctx);
   if (vv_clicked(ctx, id) || vv_activated(ctx, id))
     vv_emit(ctx, change, arg);
@@ -1611,15 +1627,14 @@ void vv_progress(vv_Ctx *ctx, const char *key, float value) {
     value = 0;
   if (value > 1)
     value = 1;
-  uint32_t track =
-      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                   VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(8)),
-                   VV_STYLE(.bg = t->track, .radius = vv_r(4)));
+  uint32_t track = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                                VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(8)),
+                                VV_STYLE(.bg = t->track, .radius = vv_r(4)));
   float w = vv_node(ctx, track)->actual_rect.w;
-  vv_box_keyed(ctx, "fill", 4,
-               VV_LAYOUT(.has_absolute = true,
-                               .absolute = vv_rect(0, 0, w * value, 8)),
-               VV_STYLE(.bg = t->accent, .radius = vv_r(4)));
+  vv_box_keyed(
+      ctx, "fill", 4,
+      VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(0, 0, w * value, 8)),
+      VV_STYLE(.bg = t->accent, .radius = vv_r(4)));
   vv_end_box(ctx);
   vv_end_box(ctx);
 }
@@ -1628,21 +1643,17 @@ static bool step_btn(vv_Ctx *ctx, const char *key, const char *glyph,
                      bool enabled) {
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
-  uint32_t id = vv_box_keyed(ctx, key, strlen(key),
-                             VV_LAYOUT(.w = vv_fixed(30),
-                                             .h = vv_fixed(30),
-                                             .main = VV_ALIGN_CENTER,
-                                             .cross = VV_ALIGN_CENTER,
-                                             .focusable = enabled,
-                                             .cursor = VV_CURSOR_POINTER),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(6),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .hover = enabled ? &hover : NULL));
+  uint32_t id = vv_box_keyed(
+      ctx, key, strlen(key),
+      VV_LAYOUT(.w = vv_fixed(30), .h = vv_fixed(30), .main = VV_ALIGN_CENTER,
+                .cross = VV_ALIGN_CENTER, .focusable = enabled,
+                .cursor = VV_CURSOR_POINTER),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(6),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border, .hover = enabled ? &hover : NULL));
   vv_text(ctx, glyph,
           VV_STYLE(.fg = enabled ? t->text : t->text_muted,
-                     .font_size = t->font_size + 2));
+                   .font_size = t->font_size + 2));
   vv_end_box(ctx);
   return enabled && vv_clicked(ctx, id);
 }
@@ -1650,10 +1661,10 @@ static bool step_btn(vv_Ctx *ctx, const char *key, const char *glyph,
 uint32_t vv_stepper(vv_Ctx *ctx, const char *key, double value, double step,
                     double min, double max, const char *unit, vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(
-      ctx, key, key ? strlen(key) : 0,
-      VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 8),
-      VV_STYLE(.bg = {0}));
+  uint32_t id =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 8),
+                   VV_STYLE(.bg = {0}));
   if (step_btn(ctx, "dec", "-", value > min)) {
     double v = value - step;
     if (v < min)
@@ -1661,14 +1672,11 @@ uint32_t vv_stepper(vv_Ctx *ctx, const char *key, double value, double step,
     vv_emit(ctx, change, vv_pf(v));
   }
   vv_box_keyed(ctx, "val", 3,
-               VV_LAYOUT(.w = vv_fixed(72),
-                               .h = vv_fixed(30),
-                               .main = VV_ALIGN_CENTER,
-                               .cross = VV_ALIGN_CENTER),
-               VV_STYLE(.bg = t->surface,
-                          .radius = vv_r(6),
-                          .border_width = vv_all(t->border_width),
-                          .border_color = t->border));
+               VV_LAYOUT(.w = vv_fixed(72), .h = vv_fixed(30),
+                         .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER),
+               VV_STYLE(.bg = t->surface, .radius = vv_r(6),
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border));
   vv_text(ctx,
           unit ? vv_fmt(ctx, "%g %s", value, unit) : vv_fmt(ctx, "%g", value),
           VV_STYLE(.fg = t->text, .font_size = t->font_size));
@@ -1688,36 +1696,33 @@ uint32_t vv_tabs(vv_Ctx *ctx, const char *key, const char *const *labels,
   const vv_Theme *t = vv_theme();
   // The bar grows to fill; tabs share it equally. (The tab width can't depend
   // on the bar width AND the bar width on the tabs — grow breaks that cycle.)
-  uint32_t bar = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                              VV_LAYOUT(.dir = VV_ROW,
-                                              .w = vv_grow(1),
-                                              .h = vv_fixed(36),
-                                              .padding = vv_all(3)),
-                              VV_STYLE(.bg = t->surface, .radius = vv_r(8)));
+  uint32_t bar =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(36),
+                             .padding = vv_all(3)),
+                   VV_STYLE(.bg = t->surface, .radius = vv_r(8)));
   // Sliding indicator (behind labels): FLIP-slides to the active tab's slot.
   float bw = vv_node(ctx, bar)->actual_rect.w;
   float tabw = count > 0 ? (bw - 6) / (float)count : 0;
   if (current < 0)
     current = 0;
-  vv_box_keyed(ctx, "ind", 3,
-               VV_LAYOUT(
-                   .has_absolute = true,
-                   .absolute = vv_rect(3 + tabw * (float)current, 3, tabw, 30)),
-               VV_STYLE(.bg = t->accent, .radius = vv_r(6)));
+  vv_box_keyed(
+      ctx, "ind", 3,
+      VV_LAYOUT(.has_absolute = true,
+                .absolute = vv_rect(3 + tabw * (float)current, 3, tabw, 30)),
+      VV_STYLE(.bg = t->accent, .radius = vv_r(6)));
   vv_end_box(ctx);
   for (int i = 0; i < count; i++) {
     bool act = i == current;
-    uint32_t tid = vv_box_keyed(ctx, labels[i], strlen(labels[i]),
-                                VV_LAYOUT(.w = vv_grow(1),
-                                                .h = vv_fixed(30),
-                                                .main = VV_ALIGN_CENTER,
-                                                .cross = VV_ALIGN_CENTER,
-                                                .focusable = true,
-                                                .cursor = VV_CURSOR_POINTER),
-                                VV_STYLE(.bg = {0}));
+    uint32_t tid = vv_box_keyed(
+        ctx, labels[i], strlen(labels[i]),
+        VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(30), .main = VV_ALIGN_CENTER,
+                  .cross = VV_ALIGN_CENTER, .focusable = true,
+                  .cursor = VV_CURSOR_POINTER),
+        VV_STYLE(.bg = {0}));
     vv_text(ctx, labels[i],
             VV_STYLE(.fg = act ? t->on_accent : t->text_muted,
-                       .font_size = t->font_size));
+                     .font_size = t->font_size));
     vv_end_box(ctx);
     if (vv_clicked(ctx, tid) || vv_activated(ctx, tid))
       vv_emit(ctx, change, vv_pi(i));
@@ -1735,26 +1740,19 @@ uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
   const vv_Theme *t = vv_theme();
   vv_Style hover = {.bg = t->surface_hi};
   vv_Style focus = {.border_color = t->accent};
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.dir = VV_ROW,
-                                             .w = vv_grow(1),
-                                             .h = vv_fixed(34),
-                                             .cross = VV_ALIGN_CENTER,
-                                             .main = VV_ALIGN_SPACE_BETWEEN,
-                                             .padding = vv_hv(12, 0),
-                                             .focusable = true,
-                                             .cursor = VV_CURSOR_POINTER),
-                             VV_STYLE(.bg = t->surface,
-                                        .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border,
-                                        .hover = &hover,
-                                        .focus = &focus));
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(34),
+                .cross = VV_ALIGN_CENTER, .main = VV_ALIGN_SPACE_BETWEEN,
+                .padding = vv_hv(12, 0), .focusable = true,
+                .cursor = VV_CURSOR_POINTER),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border, .hover = &hover, .focus = &focus));
   ComboState *s = vv_state(ctx, id, ComboState);
   const char *cur = (current >= 0 && current < count) ? options[current] : "";
-  vv_text(
-      ctx, cur,
-      VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
+  vv_text(ctx, cur,
+          VV_STYLE(.fg = t->text, .font_size = t->font_size, .font = t->font));
   vv_text(ctx, "v",
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 2));
   vv_end_box(ctx);
@@ -1767,40 +1765,30 @@ uint32_t vv_combobox(vv_Ctx *ctx, const char *key, const char *const *options,
     if (vv_pressed(ctx, scrim) || escape_pressed(ctx))
       s->open = false;
     vv_end_box(ctx);
-    vv_box_keyed(
-        ctx, vv_fmt(ctx, "%s__list", key ? key : "c"), 0,
-        VV_LAYOUT(.dir = VV_COLUMN,
-                        .w = vv_fixed(r.w),
-                        .padding = vv_all(4),
-                        .gap = 1,
-                        .has_absolute = true,
-                        .z = VV_Z_POPOVER,
-                        .absolute = vv_rect(r.x, r.y + r.h + 4, r.w, 0)),
-        VV_STYLE(.bg = t->surface_hi,
-                   .radius = vv_r(8),
-                   .border_width = vv_all(t->border_width),
-                   .border_color = t->border,
-                   .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
-                              .offset = vv_v2(0, 6),
-                              .blur = 18}));
+    vv_box_keyed(ctx, vv_fmt(ctx, "%s__list", key ? key : "c"), 0,
+                 VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(r.w),
+                           .padding = vv_all(4), .gap = 1, .has_absolute = true,
+                           .z = VV_Z_POPOVER,
+                           .absolute = vv_rect(r.x, r.y + r.h + 4, r.w, 0)),
+                 VV_STYLE(.bg = t->surface_hi, .radius = vv_r(8),
+                          .border_width = vv_all(t->border_width),
+                          .border_color = t->border,
+                          .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                     .offset = vv_v2(0, 6),
+                                     .blur = 18}));
     for (int i = 0; i < count; i++) {
       vv_Style ih = {.bg = t->accent};
       uint32_t oid = vv_box_keyed(
           ctx, options[i], strlen(options[i]),
-          VV_LAYOUT(.dir = VV_ROW,
-                          .w = vv_grow(1),
-                          .h = vv_fixed(28),
-                          .cross = VV_ALIGN_CENTER,
-                          .padding = vv_hv(10, 0),
-                          .focusable = true,
-                          .cursor = VV_CURSOR_POINTER),
+          VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(28),
+                    .cross = VV_ALIGN_CENTER, .padding = vv_hv(10, 0),
+                    .focusable = true, .cursor = VV_CURSOR_POINTER),
           VV_STYLE(.bg = i == current ? t->accent_lo : (vv_Color){0},
-                     .radius = vv_r(5),
-                     .hover = &ih));
+                   .radius = vv_r(5), .hover = &ih));
       bool hot = vv_hovered(ctx, oid);
       vv_text(ctx, options[i],
               VV_STYLE(.fg = (hot || i == current) ? t->on_accent : t->text,
-                         .font_size = t->font_size));
+                       .font_size = t->font_size));
       vv_end_box(ctx);
       if (vv_clicked(ctx, oid)) {
         vv_emit(ctx, change, vv_pi(i));
@@ -1818,28 +1806,21 @@ bool vv_tree_item(vv_Ctx *ctx, const char *key, const char *label, int depth,
   vv_Style hover = {.bg = t->surface_hi};
   uint32_t id = vv_box_keyed(
       ctx, key, key ? strlen(key) : 0,
-      VV_LAYOUT(.dir = VV_ROW,
-                      .w = vv_grow(1),
-                      .h = vv_fixed(26),
-                      .cross = VV_ALIGN_CENTER,
-                      .padding =
-                          (vv_Edges){8.0f + (float)depth * 16.0f, 0, 8, 0},
-                      .gap = 6,
-                      .focusable = true,
-                      .cursor = VV_CURSOR_POINTER),
-      VV_STYLE(.bg = selected ? t->accent_lo : (vv_Color){0},
-                 .radius = vv_r(5),
-                 .hover = selected ? NULL : &hover));
+      VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .h = vv_fixed(26),
+                .cross = VV_ALIGN_CENTER,
+                .padding = (vv_Edges){8.0f + (float)depth * 16.0f, 0, 8, 0},
+                .gap = 6, .focusable = true, .cursor = VV_CURSOR_POINTER),
+      VV_STYLE(.bg = selected ? t->accent_lo : (vv_Color){0}, .radius = vv_r(5),
+               .hover = selected ? NULL : &hover));
   // Disclosure caret (or a spacer for leaves) keeps labels aligned.
-  vv_box_keyed(ctx, "c", 1, VV_LAYOUT(.w = vv_fixed(12)),
-               VV_STYLE(.bg = {0}));
+  vv_box_keyed(ctx, "c", 1, VV_LAYOUT(.w = vv_fixed(12)), VV_STYLE(.bg = {0}));
   if (!leaf)
     vv_text(ctx, expanded ? "v" : ">",
             VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 3));
   vv_end_box(ctx);
   vv_text(ctx, label,
           VV_STYLE(.fg = selected ? t->on_accent : t->text,
-                     .font_size = t->font_size));
+                   .font_size = t->font_size));
   vv_end_box(ctx);
   return vv_clicked(ctx, id);
 }
@@ -1853,21 +1834,17 @@ void vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at,
     *open = false;
   vv_end_box(ctx);
   vv_box_keyed(ctx, key, strlen(key),
-               VV_LAYOUT(.dir = VV_COLUMN,
-                               .w = vv_fixed(200),
-                               .padding = vv_all(5),
-                               .gap = 1,
-                               .has_absolute = true,
-                               .z = VV_Z_POPOVER,
-                               .absolute = vv_rect(at.x, at.y, 200, 0)),
-               VV_STYLE(.bg = t->surface_hi,
-                          .radius = vv_r(8),
-                          .border_width = vv_all(t->border_width),
-                          .border_color = t->border,
-                          .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
-                                     .offset = vv_v2(0, 6),
-                                     .blur = 18,
-                                     .spread = 2}));
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(200),
+                         .padding = vv_all(5), .gap = 1, .has_absolute = true,
+                         .z = VV_Z_POPOVER,
+                         .absolute = vv_rect(at.x, at.y, 200, 0)),
+               VV_STYLE(.bg = t->surface_hi, .radius = vv_r(8),
+                        .border_width = vv_all(t->border_width),
+                        .border_color = t->border,
+                        .shadow = {.color = vv_rgba(0, 0, 0, 0.35f),
+                                   .offset = vv_v2(0, 6),
+                                   .blur = 18,
+                                   .spread = 2}));
 }
 void vv_context_menu_end(vv_Ctx *ctx) {
   vv_end_box(ctx);
@@ -1882,18 +1859,21 @@ void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n) {
   float gap = t->font_size * 0.32f;
   vv_box_keyed(ctx, key, key ? strlen(key) : 0,
                VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .wrap = true,
-                               .gap = gap, .cross = VV_ALIGN_END),
+                         .gap = gap, .cross = VV_ALIGN_END),
                VV_STYLE(0));
   for (int s = 0; s < n; s++) {
     const char *p = spans[s].text;
-    if (!p) continue;
+    if (!p)
+      continue;
     float sz = spans[s].size > 0 ? spans[s].size : t->font_size;
     vv_Color col = (spans[s].color.a > 0.001f) ? spans[s].color : t->text;
     vv_FontID fnt = spans[s].font ? spans[s].font : t->font;
     while (*p) {
-      while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r') p++; // skip ws
+      while (*p == ' ' || *p == '\n' || *p == '\t' || *p == '\r')
+        p++; // skip ws
       const char *w = p;
-      while (*p && *p != ' ' && *p != '\n' && *p != '\t' && *p != '\r') p++;
+      while (*p && *p != ' ' && *p != '\n' && *p != '\t' && *p != '\r')
+        p++;
       if (p > w)
         vv_text(ctx, vv_fmt(ctx, "%.*s", (int)(p - w), w),
                 VV_STYLE(.fg = col, .font_size = sz, .font = fnt));
@@ -1903,20 +1883,24 @@ void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n) {
 }
 
 // ---- color_picker ---------------------------------------------------------
-typedef struct { bool open; } PickerState;
+typedef struct {
+  bool open;
+} PickerState;
 
 uint32_t vv_color_picker(vv_Ctx *ctx, const char *key, vv_Color value,
                          vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.w = vv_fixed(52), .h = vv_fixed(28),
-                                             .focusable = true, .cursor = VV_CURSOR_POINTER),
-                             VV_STYLE(.bg = value, .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border));
+  uint32_t id =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.w = vv_fixed(52), .h = vv_fixed(28),
+                             .focusable = true, .cursor = VV_CURSOR_POINTER),
+                   VV_STYLE(.bg = value, .radius = vv_r(t->radius),
+                            .border_width = vv_all(t->border_width),
+                            .border_color = t->border));
   vv_end_box(ctx);
   PickerState *st = vv_state(ctx, id, PickerState);
-  if (vv_clicked(ctx, id) || vv_activated(ctx, id)) st->open = !st->open;
+  if (vv_clicked(ctx, id) || vv_activated(ctx, id))
+    st->open = !st->open;
 
   if (st->open) {
     vv_Rect r = vv_node(ctx, id)->actual_rect;
@@ -1927,14 +1911,21 @@ uint32_t vv_color_picker(vv_Ctx *ctx, const char *key, vv_Color value,
     const char *keys[3] = {"cr", "cg", "cb"};
     bool any = false;
     for (int i = 0; i < 3; i++) {
-      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER, .gap = 8),
+      VV_BOX(ctx,
+             VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
+                       .gap = 8),
              VV_STYLE(.bg = {0})) {
-        vv_text(ctx, labels[i], VV_STYLE(.fg = t->text, .font_size = t->font_size));
+        vv_text(ctx, labels[i],
+                VV_STYLE(.fg = t->text, .font_size = t->font_size));
         SliderResult sr = slider_core(ctx, keys[i], *chan[i], 0.0f, 1.0f, NULL);
-        if (sr.changed) { *chan[i] = sr.value; any = true; }
+        if (sr.changed) {
+          *chan[i] = sr.value;
+          any = true;
+        }
       }
     }
-    if (any) vv_emit(ctx, change, vv_pcolor(c));
+    if (any)
+      vv_emit(ctx, change, vv_pcolor(c));
     vv_popover_end(ctx);
   }
   return id;
@@ -1959,13 +1950,13 @@ uint32_t vv_image(vv_Ctx *ctx, const char *key, const vv_ImageRef *img,
 // ---- xy_pad ---------------------------------------------------------------
 uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.w = {VV_SIZE_GROW, 1, 140, 0},
-                                             .h = vv_fixed(160),
-                                             .focusable = true, .clip = true),
-                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border));
+  uint32_t id =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.w = {VV_SIZE_GROW, 1, 140, 0}, .h = vv_fixed(160),
+                             .focusable = true, .clip = true),
+                   VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                            .border_width = vv_all(t->border_width),
+                            .border_color = t->border));
   vv_Node *n = vv_node(ctx, id);
   float w = n->actual_rect.w > 1.0f ? n->actual_rect.w : 140.0f;
   float h = n->actual_rect.h > 1.0f ? n->actual_rect.h : 160.0f;
@@ -1975,10 +1966,13 @@ uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change) {
   float iw = vv_maxf(w - 2 * M, 1.0f), ih = vv_maxf(h - 2 * M, 1.0f);
 
   vv_Vec2 out = value;
-  if (vv_pressed(ctx, id)) vv_focus(ctx, id);
+  if (vv_pressed(ctx, id))
+    vv_focus(ctx, id);
   if (vv_active(ctx, id)) {
-    float rx = vv_clampf((vv_mouse(ctx).x - n->actual_rect.x - M) / iw, 0.0f, 1.0f);
-    float ry = vv_clampf((vv_mouse(ctx).y - n->actual_rect.y - M) / ih, 0.0f, 1.0f);
+    float rx =
+        vv_clampf((vv_mouse(ctx).x - n->actual_rect.x - M) / iw, 0.0f, 1.0f);
+    float ry =
+        vv_clampf((vv_mouse(ctx).y - n->actual_rect.y - M) / ih, 0.0f, 1.0f);
     out = vv_v2(rx, 1.0f - ry); // y is up
   }
 
@@ -1992,16 +1986,17 @@ uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change) {
 
   // Handle (absolute child so it FLIP-springs when the value jumps).
   vv_Style hover = {.bg = t->accent_hi};
-  vv_box_keyed(ctx, "h", 1,
-               VV_LAYOUT(.w = vv_fixed(16), .h = vv_fixed(16), .has_absolute = true,
-                               .absolute = vv_rect(hx - 8, hy - 8, 16, 16)),
-               VV_STYLE(.bg = t->accent, .radius = vv_r(8),
-                          .border_width = vv_all(2), .border_color = t->on_accent,
-                          .hover = &hover));
+  vv_box_keyed(
+      ctx, "h", 1,
+      VV_LAYOUT(.w = vv_fixed(16), .h = vv_fixed(16), .has_absolute = true,
+                .absolute = vv_rect(hx - 8, hy - 8, 16, 16)),
+      VV_STYLE(.bg = t->accent, .radius = vv_r(8), .border_width = vv_all(2),
+               .border_color = t->on_accent, .hover = &hover));
   vv_end_box(ctx);
   vv_end_box(ctx);
 
-  if (out.x != value.x || out.y != value.y) vv_emit(ctx, change, vv_pv2(out));
+  if (out.x != value.x || out.y != value.y)
+    vv_emit(ctx, change, vv_pv2(out));
   return id;
 }
 
@@ -2009,67 +2004,112 @@ uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change) {
 void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
              vv_PlotOpts o) {
   const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.w = vv_grow(1),
-                                             .h = o.height > 0 ? vv_fixed(o.height) : vv_grow(1),
-                                             .clip = true, .focusable = o.interactive),
-                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border));
+  uint32_t id = vv_box_keyed(
+      ctx, key, key ? strlen(key) : 0,
+      VV_LAYOUT(.w = vv_grow(1),
+                .h = o.height > 0 ? vv_fixed(o.height) : vv_grow(1),
+                .clip = true, .focusable = o.interactive),
+      VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+               .border_width = vv_all(t->border_width),
+               .border_color = t->border));
   vv_Node *nd = vv_node(ctx, id);
   float w = nd->actual_rect.w, h = nd->actual_rect.h;
-  if (w < 2.0f || h < 2.0f) { vv_end_box(ctx); return; } // not laid out yet
+  if (w < 2.0f || h < 2.0f) {
+    vv_end_box(ctx);
+    return;
+  } // not laid out yet
 
   const float PAD = 10.0f;
   float ix = PAD, iy = PAD, iw = w - 2 * PAD, ih = h - 2 * PAD;
-  if (iw < 1.0f || ih < 1.0f) { vv_end_box(ctx); return; }
+  if (iw < 1.0f || ih < 1.0f) {
+    vv_end_box(ctx);
+    return;
+  }
 
   // Ranges: explicit, or fit to the data.
   float xmin = o.x_min, xmax = o.x_max, ymin = o.y_min, ymax = o.y_max;
-  if (o.auto_x || xmin == xmax) { xmin = 1e30f; xmax = -1e30f; }
-  if (o.auto_y || ymin == ymax) { ymin = 1e30f; ymax = -1e30f; }
+  if (o.auto_x || xmin == xmax) {
+    xmin = 1e30f;
+    xmax = -1e30f;
+  }
+  if (o.auto_y || ymin == ymax) {
+    ymin = 1e30f;
+    ymax = -1e30f;
+  }
   if (o.auto_x || o.auto_y || o.x_min == o.x_max || o.y_min == o.y_max) {
     for (int s = 0; s < n; s++) {
       const vv_PlotSeries *ps = &series[s];
       for (int k = 0; k < ps->count; k++) {
         float x = ps->xs ? ps->xs[k] : (float)k;
         float y = ps->ys[k];
-        if (o.auto_x || o.x_min == o.x_max) { xmin = vv_minf(xmin, x); xmax = vv_maxf(xmax, x); }
-        if (o.auto_y || o.y_min == o.y_max) { ymin = vv_minf(ymin, y); ymax = vv_maxf(ymax, y); }
+        if (o.auto_x || o.x_min == o.x_max) {
+          xmin = vv_minf(xmin, x);
+          xmax = vv_maxf(xmax, x);
+        }
+        if (o.auto_y || o.y_min == o.y_max) {
+          ymin = vv_minf(ymin, y);
+          ymax = vv_maxf(ymax, y);
+        }
       }
     }
   }
-  if (xmax <= xmin) { xmin -= 0.5f; xmax += 0.5f; }
-  if (ymax <= ymin) { ymin -= 0.5f; ymax += 0.5f; }
+  if (xmax <= xmin) {
+    xmin -= 0.5f;
+    xmax += 0.5f;
+  }
+  if (ymax <= ymin) {
+    ymin -= 0.5f;
+    ymax += 0.5f;
+  }
 
   // Interactive view: pan (drag) + zoom (wheel around the cursor), reset on
   // double-click. The view range lives in per-node state, seeded from the data.
   if (o.interactive) {
-    typedef struct { float xmin, xmax, ymin, ymax, dx, dy; bool init; } PlotView;
+    typedef struct {
+      float xmin, xmax, ymin, ymax, dx, dy;
+      bool init;
+    } PlotView;
     PlotView *v = vv_state(ctx, id, PlotView);
     if (!v->init || vv_double_clicked(ctx, id)) {
-      v->xmin = xmin; v->xmax = xmax; v->ymin = ymin; v->ymax = ymax; v->init = true;
+      v->xmin = xmin;
+      v->xmax = xmax;
+      v->ymin = ymin;
+      v->ymax = ymax;
+      v->init = true;
     }
     float wheel = ctx->input.wheel;
     if (wheel != 0.0f && vv_hovered(ctx, id)) {
       float f = wheel > 0 ? 0.85f : 1.0f / 0.85f;
-      float crx = vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - ix) / iw, 0.0f, 1.0f);
-      float cry = vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - iy) / ih, 0.0f, 1.0f);
+      float crx = vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - ix) / iw,
+                            0.0f, 1.0f);
+      float cry = vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - iy) / ih,
+                            0.0f, 1.0f);
       float cx = v->xmin + crx * (v->xmax - v->xmin);
       float cy = v->ymax - cry * (v->ymax - v->ymin); // y flipped
-      v->xmin = cx - (cx - v->xmin) * f; v->xmax = cx + (v->xmax - cx) * f;
-      v->ymin = cy - (cy - v->ymin) * f; v->ymax = cy + (v->ymax - cy) * f;
+      v->xmin = cx - (cx - v->xmin) * f;
+      v->xmax = cx + (v->xmax - cx) * f;
+      v->ymin = cy - (cy - v->ymin) * f;
+      v->ymax = cy + (v->ymax - cy) * f;
     }
-    if (vv_pressed(ctx, id)) { v->dx = 0; v->dy = 0; }
+    if (vv_pressed(ctx, id)) {
+      v->dx = 0;
+      v->dy = 0;
+    }
     if (vv_active(ctx, id)) {
       vv_Vec2 d = vv_drag_delta(ctx, id);
       float addx = d.x - v->dx, addy = d.y - v->dy; // per-frame increment
-      v->dx = d.x; v->dy = d.y;
+      v->dx = d.x;
+      v->dy = d.y;
       float ux = (v->xmax - v->xmin) / iw, uy = (v->ymax - v->ymin) / ih;
-      v->xmin -= addx * ux; v->xmax -= addx * ux;
-      v->ymin += addy * uy; v->ymax += addy * uy; // drag down => view moves up
+      v->xmin -= addx * ux;
+      v->xmax -= addx * ux;
+      v->ymin += addy * uy;
+      v->ymax += addy * uy; // drag down => view moves up
     }
-    xmin = v->xmin; xmax = v->xmax; ymin = v->ymin; ymax = v->ymax;
+    xmin = v->xmin;
+    xmax = v->xmax;
+    ymin = v->ymin;
+    ymax = v->ymax;
   }
 
   // Gridlines (5x4), drawn under the data.
@@ -2087,10 +2127,12 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
 
   // Each series, mapped data-space -> local pixels (y flipped: ymax at top).
   vv_Vec2 buf[1024];
-  float base = iy + vv_remapf(vv_clampf(0.0f, ymin, ymax), ymax, ymin, 0.0f, ih);
+  float base =
+      iy + vv_remapf(vv_clampf(0.0f, ymin, ymax), ymax, ymin, 0.0f, ih);
   for (int s = 0; s < n; s++) {
     const vv_PlotSeries *ps = &series[s];
-    if (ps->count < 1) continue;
+    if (ps->count < 1)
+      continue;
     int step = ps->count > 1024 ? (ps->count + 1023) / 1024 : 1; // decimate
     int m = 0;
     for (int k = 0; k < ps->count && m < 1024; k += step) {
@@ -2100,47 +2142,56 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
     }
     float lw = ps->width > 0 ? ps->width : 2.0f;
     switch (ps->kind) {
-      case VV_PLOT_SCATTER:
-        vv_draw_points(ctx, id, buf, m, lw > 0 ? lw : 3.0f, ps->color);
-        break;
-      case VV_PLOT_BARS: {
-        float bw = iw / (float)(m > 0 ? m : 1) * 0.6f;
-        if (bw < 1.0f) bw = 1.0f;
-        for (int k = 0; k < m; k++) {
-          vv_Vec2 q[4] = {{buf[k].x - bw / 2, buf[k].y}, {buf[k].x + bw / 2, buf[k].y},
-                          {buf[k].x + bw / 2, base}, {buf[k].x - bw / 2, base}};
-          vv_draw_polygon(ctx, id, q, 4, ps->color);
-        }
-      } break;
-      case VV_PLOT_LINE:
-      default:
-        vv_draw_polyline(ctx, id, buf, m, lw, ps->color);
-        break;
+    case VV_PLOT_SCATTER:
+      vv_draw_points(ctx, id, buf, m, lw > 0 ? lw : 3.0f, ps->color);
+      break;
+    case VV_PLOT_BARS: {
+      float bw = iw / (float)(m > 0 ? m : 1) * 0.6f;
+      if (bw < 1.0f)
+        bw = 1.0f;
+      for (int k = 0; k < m; k++) {
+        vv_Vec2 q[4] = {{buf[k].x - bw / 2, buf[k].y},
+                        {buf[k].x + bw / 2, buf[k].y},
+                        {buf[k].x + bw / 2, base},
+                        {buf[k].x - bw / 2, base}};
+        vv_draw_polygon(ctx, id, q, 4, ps->color);
+      }
+    } break;
+    case VV_PLOT_LINE:
+    default:
+      vv_draw_polyline(ctx, id, buf, m, lw, ps->color);
+      break;
     }
   }
 
   // Corner y-range labels.
   vv_box_keyed(ctx, "yl", 2,
-               VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(ix + 2, iy - 2, 60, 16)),
+               VV_LAYOUT(.has_absolute = true,
+                         .absolute = vv_rect(ix + 2, iy - 2, 60, 16)),
                VV_STYLE(.bg = {0}));
   vv_text(ctx, vv_fmt(ctx, "%.2f", (double)ymax),
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
   vv_end_box(ctx);
   vv_box_keyed(ctx, "yl0", 3,
-               VV_LAYOUT(.has_absolute = true, .absolute = vv_rect(ix + 2, iy + ih - 16, 60, 16)),
+               VV_LAYOUT(.has_absolute = true,
+                         .absolute = vv_rect(ix + 2, iy + ih - 16, 60, 16)),
                VV_STYLE(.bg = {0}));
   vv_text(ctx, vv_fmt(ctx, "%.2f", (double)ymin),
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
   vv_end_box(ctx);
 
   // X-range labels (bottom corners).
-  vv_box_keyed(ctx, "xl0", 3, VV_LAYOUT(.has_absolute = true,
-               .absolute = vv_rect(ix, iy + ih + 1, 60, 14)), VV_STYLE(.bg = {0}));
+  vv_box_keyed(ctx, "xl0", 3,
+               VV_LAYOUT(.has_absolute = true,
+                         .absolute = vv_rect(ix, iy + ih + 1, 60, 14)),
+               VV_STYLE(.bg = {0}));
   vv_text(ctx, vv_fmt(ctx, "%.1f", (double)xmin),
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
   vv_end_box(ctx);
-  vv_box_keyed(ctx, "xl1", 3, VV_LAYOUT(.has_absolute = true,
-               .absolute = vv_rect(ix + iw - 60, iy + ih + 1, 60, 14), .main = VV_ALIGN_END),
+  vv_box_keyed(ctx, "xl1", 3,
+               VV_LAYOUT(.has_absolute = true,
+                         .absolute = vv_rect(ix + iw - 60, iy + ih + 1, 60, 14),
+                         .main = VV_ALIGN_END),
                VV_STYLE(.bg = {0}));
   vv_text(ctx, vv_fmt(ctx, "%.1f", (double)xmax),
           VV_STYLE(.fg = t->text_muted, .font_size = t->font_size - 4));
@@ -2148,21 +2199,28 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
 
   // Legend: swatch + name per named series, top-right.
   int named = 0;
-  for (int s = 0; s < n; s++) if (series[s].name) named++;
+  for (int s = 0; s < n; s++)
+    if (series[s].name)
+      named++;
   if (named > 0) {
-    vv_box_keyed(ctx, "leg", 3,
-                 VV_LAYOUT(.dir = VV_COLUMN, .has_absolute = true, .gap = 3, .padding = vv_all(6),
-                                 .absolute = vv_rect(ix + iw - 130, iy + 4, 126, 0)),
-                 VV_STYLE(.bg = vv_rgba(t->surface.r, t->surface.g, t->surface.b, 0.7f),
-                            .radius = vv_r(5)));
+    vv_box_keyed(
+        ctx, "leg", 3,
+        VV_LAYOUT(.dir = VV_COLUMN, .has_absolute = true, .gap = 3,
+                  .padding = vv_all(6),
+                  .absolute = vv_rect(ix + iw - 130, iy + 4, 126, 0)),
+        VV_STYLE(.bg = vv_rgba(t->surface.r, t->surface.g, t->surface.b, 0.7f),
+                 .radius = vv_r(5)));
     for (int s = 0; s < n; s++) {
-      if (!series[s].name) continue;
-      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 6), VV_STYLE(.bg = {0})) {
+      if (!series[s].name)
+        continue;
+      VV_BOX(ctx, VV_LAYOUT(.dir = VV_ROW, .cross = VV_ALIGN_CENTER, .gap = 6),
+             VV_STYLE(.bg = {0})) {
         vv_box_keyed(ctx, vv_fmt(ctx, "sw%d", s), 0,
                      VV_LAYOUT(.w = vv_fixed(12), .h = vv_fixed(3)),
                      VV_STYLE(.bg = series[s].color, .radius = vv_r(1.5f)));
         vv_end_box(ctx);
-        vv_text(ctx, series[s].name, VV_STYLE(.fg = t->text, .font_size = t->font_size - 4));
+        vv_text(ctx, series[s].name,
+                VV_STYLE(.fg = t->text, .font_size = t->font_size - 4));
       }
     }
     vv_end_box(ctx);
@@ -2172,15 +2230,18 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
   if (vv_hovered(ctx, id) && n > 0 && series[0].count > 0) {
     float mx = vv_mouse(ctx).x - nd->actual_rect.x;
     if (mx >= ix && mx <= ix + iw) {
-      vv_draw_line(ctx, id, vv_v2(mx, iy), vv_v2(mx, iy + ih), 1.0f, t->text_muted);
+      vv_draw_line(ctx, id, vv_v2(mx, iy), vv_v2(mx, iy + ih), 1.0f,
+                   t->text_muted);
       const vv_PlotSeries *ps = &series[0];
       float xd = vv_remapf(mx, ix, ix + iw, xmin, xmax);
       float x0 = ps->xs ? ps->xs[0] : 0.0f;
       float x1 = ps->xs ? ps->xs[ps->count - 1] : (float)(ps->count - 1);
       int k = (int)(vv_remapf(xd, x0, x1, 0.0f, (float)(ps->count - 1)) + 0.5f);
       k = k < 0 ? 0 : (k >= ps->count ? ps->count - 1 : k);
-      vv_box_keyed(ctx, "rd", 2, VV_LAYOUT(.has_absolute = true, .padding = vv_hv(6, 3),
-                   .absolute = vv_rect(vv_minf(mx + 6, ix + iw - 70), iy + 4, 66, 0)),
+      vv_box_keyed(ctx, "rd", 2,
+                   VV_LAYOUT(.has_absolute = true, .padding = vv_hv(6, 3),
+                             .absolute = vv_rect(vv_minf(mx + 6, ix + iw - 70),
+                                                 iy + 4, 66, 0)),
                    VV_STYLE(.bg = t->accent, .radius = vv_r(4)));
       vv_text(ctx, vv_fmt(ctx, "%.3f", (double)ps->ys[k]),
               VV_STYLE(.fg = t->on_accent, .font_size = t->font_size - 4));
@@ -2192,12 +2253,14 @@ void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
 }
 
 // Uniform Catmull-Rom through `p` (n points) sampled into `out` (cap), `per`
-// samples per segment. Endpoints are duplicated so the spline passes through the
-// first and last control points. Returns the sample count.
-static int catmull_rom(const vv_Vec2 *p, int n, vv_Vec2 *out, int cap, int per) {
+// samples per segment. Endpoints are duplicated so the spline passes through
+// the first and last control points. Returns the sample count.
+static int catmull_rom(const vv_Vec2 *p, int n, vv_Vec2 *out, int cap,
+                       int per) {
   if (n < 3) {
     int m = n < cap ? n : cap;
-    for (int i = 0; i < m; i++) out[i] = p[i];
+    for (int i = 0; i < m; i++)
+      out[i] = p[i];
     return m;
   }
   int m = 0;
@@ -2206,16 +2269,16 @@ static int catmull_rom(const vv_Vec2 *p, int n, vv_Vec2 *out, int cap, int per) 
     vv_Vec2 p2 = p[i + 1], p3 = p[i + 2 < n ? i + 2 : n - 1];
     for (int s = 0; s < per && m < cap; s++) {
       float u = (float)s / (float)per, u2 = u * u, u3 = u2 * u;
-      out[m++] = vv_v2(
-          0.5f * (2 * p1.x + (-p0.x + p2.x) * u +
-                  (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * u2 +
-                  (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * u3),
-          0.5f * (2 * p1.y + (-p0.y + p2.y) * u +
-                  (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * u2 +
-                  (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * u3));
+      out[m++] = vv_v2(0.5f * (2 * p1.x + (-p0.x + p2.x) * u +
+                               (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * u2 +
+                               (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * u3),
+                       0.5f * (2 * p1.y + (-p0.y + p2.y) * u +
+                               (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * u2 +
+                               (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * u3));
     }
   }
-  if (m < cap) out[m++] = p[n - 1];
+  if (m < cap)
+    out[m++] = p[n - 1];
   return m;
 }
 
@@ -2223,11 +2286,12 @@ static int catmull_rom(const vv_Vec2 *p, int n, vv_Vec2 *out, int cap, int per) 
 uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
                          int count, bool smooth, vv_Msg change) {
   const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(ctx, key, key ? strlen(key) : 0,
-                             VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(180), .clip = true),
-                             VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
-                                        .border_width = vv_all(t->border_width),
-                                        .border_color = t->border));
+  uint32_t id =
+      vv_box_keyed(ctx, key, key ? strlen(key) : 0,
+                   VV_LAYOUT(.w = vv_grow(1), .h = vv_fixed(180), .clip = true),
+                   VV_STYLE(.bg = t->surface, .radius = vv_r(t->radius),
+                            .border_width = vv_all(t->border_width),
+                            .border_color = t->border));
   vv_Node *nd = vv_node(ctx, id);
   float w = nd->actual_rect.w > 1.0f ? nd->actual_rect.w : 200.0f;
   float h = nd->actual_rect.h > 1.0f ? nd->actual_rect.h : 180.0f;
@@ -2237,8 +2301,10 @@ uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
   // Gridlines under the curve.
   vv_Color g = vv_rgba(t->border.r, t->border.g, t->border.b, 0.5f);
   for (int i = 1; i < 4; i++) {
-    vv_draw_line(ctx, id, vv_v2(w * (float)i / 4, 0), vv_v2(w * (float)i / 4, h), 1.0f, g);
-    vv_draw_line(ctx, id, vv_v2(0, h * (float)i / 4), vv_v2(w, h * (float)i / 4), 1.0f, g);
+    vv_draw_line(ctx, id, vv_v2(w * (float)i / 4, 0),
+                 vv_v2(w * (float)i / 4, h), 1.0f, g);
+    vv_draw_line(ctx, id, vv_v2(0, h * (float)i / 4),
+                 vv_v2(w, h * (float)i / 4), 1.0f, g);
   }
 
   // Control points mapped to local (y-up) pixels, then the connecting curve —
@@ -2259,18 +2325,21 @@ uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
   // Draggable control points (each its own interactive child).
   vv_Style hover = {.bg = t->accent_hi};
   for (int k = 0; k < m; k++) {
-    uint32_t pid = vv_box_keyed(ctx, vv_fmt(ctx, "p%d", k), 0,
-                                VV_LAYOUT(.w = vv_fixed(14), .h = vv_fixed(14),
-                                                .has_absolute = true, .focusable = true,
-                                                .absolute = vv_rect(buf[k].x - 7, buf[k].y - 7, 14, 14)),
-                                VV_STYLE(.bg = t->knob, .radius = vv_r(7),
-                                           .border_width = vv_all(2),
-                                           .border_color = t->accent, .hover = &hover));
+    uint32_t pid = vv_box_keyed(
+        ctx, vv_fmt(ctx, "p%d", k), 0,
+        VV_LAYOUT(.w = vv_fixed(14), .h = vv_fixed(14), .has_absolute = true,
+                  .focusable = true,
+                  .absolute = vv_rect(buf[k].x - 7, buf[k].y - 7, 14, 14)),
+        VV_STYLE(.bg = t->knob, .radius = vv_r(7), .border_width = vv_all(2),
+                 .border_color = t->accent, .hover = &hover));
     vv_end_box(ctx);
-    if (vv_pressed(ctx, pid)) vv_focus(ctx, pid);
+    if (vv_pressed(ctx, pid))
+      vv_focus(ctx, pid);
     if (vv_active(ctx, pid)) {
-      float nx = vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - M) / iw, 0.0f, 1.0f);
-      float ny = vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - M) / ih, 0.0f, 1.0f);
+      float nx =
+          vv_clampf((vv_mouse(ctx).x - nd->actual_rect.x - M) / iw, 0.0f, 1.0f);
+      float ny =
+          vv_clampf((vv_mouse(ctx).y - nd->actual_rect.y - M) / ih, 0.0f, 1.0f);
       vv_CurveEdit *e = vv_arena_alloc(&ctx->frame, sizeof *e);
       e->index = k;
       e->pos = vv_v2(nx, 1.0f - ny);

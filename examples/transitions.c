@@ -132,7 +132,7 @@ static void async_panel(vv_Ctx *c, App *a) {
            VV_STYLE(.bg = t->surface, .radius = vv_r(14),
                     .border_width = vv_all(1), .border_color = t->border)) {
       if (a->async == 0) { // loading skeleton
-        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .gap = 12),
+        VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN,/* .w = vv_grow(1)*/ .gap = 12),
                VV_STYLE(.bg = {0})) {
           skeleton_bar(c, "sk0", 60);
           skeleton_bar(c, "sk1", 100);

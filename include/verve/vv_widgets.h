@@ -10,31 +10,95 @@
 #include "vv_context.h"
 #include "vv_value.h"
 
-// A theme is just values (§7.1). Swapping one animates for free. Beyond the
-// palette it also carries the shape/spacing metrics widgets default to — border
-// thickness, control padding, and the gap between stacked elements — so a theme
-// restyles geometry, not only colour.
+// A theme is just values (§7.1). Swapping one animates for free. It is a flat
+// set of *design tokens* — semantic colour roles (surfaces, controls, text,
+// borders, brand, status) plus shape/spacing scales (radius, spacing) — and the
+// functional metrics widgets default to (border thickness, control padding,
+// font). So a theme restyles both colour and geometry.
+//
+// Several tokens keep a legacy alias (via anonymous unions) so code written
+// against the older, smaller palette keeps compiling: `accent` names the same
+// storage as `brand_primary`, `surface` as `surface_app`, and so on. New code
+// should prefer the token name.
 typedef struct {
-    vv_Color surface, surface_hi;
-    vv_Color accent, accent_hi, accent_lo;
-    vv_Color text, text_muted, on_accent;
-    vv_Color track, knob, border, danger;
-    float    radius;
-    float    border_width;   // default hairline-border thickness (px)
-    float    pad_x, pad_y;   // default control padding (horizontal, vertical)
-    float    gap;            // default spacing between stacked elements
-    vv_FontID font;
-    float     font_size;
+  // --- Surfaces: backgrounds by elevation ---------------------------------
+  union { vv_Color surface_app; vv_Color surface; }; // window / canvas base
+  vv_Color surface_panel;   // sidebars, toolbars, tree/list views, status bars
+  vv_Color surface_card;    // discrete elevated blocks: cards, group boxes
+  vv_Color surface_overlay; // floating surfaces: menus, tooltips, popovers
+
+  // --- Interactive controls: neutral control fills, by state --------------
+  union { vv_Color control_bg_rest; vv_Color track; }; // rest / scrollbar track
+  union { vv_Color control_bg_hover; vv_Color surface_hi; }; // cursor hover
+  vv_Color control_bg_active;   // pressed / selected
+  vv_Color control_bg_disabled; // non-interactive fill
+
+  // --- Text & content -----------------------------------------------------
+  union { vv_Color text_primary; vv_Color text; }; // body text, headers
+  vv_Color text_secondary; // captions, labels, inactive tab headers
+  vv_Color text_muted;     // placeholders, disabled labels, menu shortcuts
+  vv_Color text_inverse;   // text on an inverted background (dark tooltip, …)
+  union { vv_Color text_on_brand; vv_Color on_accent; }; // text on brand fill
+
+  // --- Borders & dividers -------------------------------------------------
+  vv_Color border_subtle;  // soft separators, row dividers
+  union { vv_Color border_default; vv_Color border; }; // standard component edge
+  vv_Color border_strong;  // emphasis / hovered inputs / active headers
+  vv_Color border_focus;   // keyboard-focus / selection ring
+
+  // --- Brand & accents ----------------------------------------------------
+  union { vv_Color brand_primary; vv_Color accent; };  // key action colour
+  union { vv_Color brand_hover; vv_Color accent_hi; }; // brand hover
+  union { vv_Color brand_active; vv_Color accent_lo; };// brand press
+  vv_Color brand_subtle;   // tinted selection / active-row fill
+
+  // --- Status & feedback --------------------------------------------------
+  union { vv_Color status_error; vv_Color danger; }; // destructive / error
+  vv_Color status_error_subtle; // error banner / invalid input tint
+  vv_Color status_warning;      // caution / unsaved indicators
+  vv_Color status_success;      // confirmation / completion
+  vv_Color status_info;         // informational callouts
+
+  vv_Color knob; // slider thumb / toggle knob (functional, not a token)
+
+  // --- Metrics: radius scale ----------------------------------------------
+  float radius_sm;                             // subtle rounding (2–4px)
+  union { float radius_md; float radius; };    // standard widget rounding
+  float radius_lg;                             // container rounding (12–16px)
+  float radius_full;                           // pill / circular (9999)
+
+  // --- Metrics: spacing scale ---------------------------------------------
+  float space_xs; // tight step (2–4px)
+  float space_sm; // compact padding (6–8px)
+  float space_md; // standard layout spacing (12–16px)
+  float space_lg; // large container gap (24–32px)
+
+  // --- Functional metrics widgets default to ------------------------------
+  float border_width; // default hairline-border thickness (px)
+  float pad_x, pad_y; // default control padding (horizontal, vertical)
+  float gap;          // default spacing between stacked elements
+  vv_FontID font;
+  float font_size;
 } vv_Theme;
 
-vv_Theme       vv_theme_dark(void);   // sensible default palette
-void           vv_set_theme(const vv_Theme *t);
-const vv_Theme *vv_theme(void);
+vv_Theme vv_theme_dark(void); // sensible default palette
+
+// Fill the derived semantic tokens (surface elevations, control states,
+// text/border variants, status hues) and the radius/spacing scales from a
+// theme's *core* palette + metrics, then return it. Palette constructors only
+// specify the handful of core roles and defer the rest to this. Any token left
+// non-zero by the caller is preserved, so a palette can still override a derived
+// token explicitly. Defined in vv_theme.c.
+vv_Theme vv_theme_complete(vv_Theme core);
+
+void vv_set_theme(const vv_Theme *t);
+const vv_Theme *vv_theme(void); // gets the theme
 
 // Primitives / interactive (§14.5). Widgets are emit-only: rather than return
 // an interaction value, they push a message + payload into the context queue
 // when their action fires, and return their node handle (for vv_state or extra
-// queries). `key` gives stable identity in loops/conditionals; NULL => sequence.
+// queries). `key` gives stable identity in loops/conditionals; NULL =>
+// sequence.
 //
 // The primary action is a direct `on_*` message parameter; the `_on` variants
 // take an optional vv_On for hover/press/double-click bindings. Controlled
@@ -75,7 +139,7 @@ uint32_t vv_radio(vv_Ctx *ctx, const char *key, const char *label,
 
 // A determinate progress bar, `value` in [0,1]. Non-interactive; the fill
 // FLIP-springs to the new width.
-void     vv_progress(vv_Ctx *ctx, const char *key, float value);
+void vv_progress(vv_Ctx *ctx, const char *key, float value);
 
 // A number stepper: [-] value unit [+]. Emits `change` with the new value
 // (`.as_float`), clamped to [min,max], stepped by `step`. `unit` may be NULL.
@@ -104,35 +168,38 @@ uint32_t vv_xy_pad(vv_Ctx *ctx, const char *key, vv_Vec2 value, vv_Msg change);
 // line, scatter, or bars. Non-interactive; purely a view of the data.
 typedef enum { VV_PLOT_LINE, VV_PLOT_SCATTER, VV_PLOT_BARS } vv_PlotKind;
 typedef struct {
-    const float *ys;      // sample values (required)
-    const float *xs;      // optional x coords; NULL => 0,1,2,...
-    int          count;
-    vv_Color     color;
-    vv_PlotKind  kind;
-    float        width;   // line width / point radius / bar inset (0 => default)
-    const char  *name;    // optional: shown in the legend
+  const float *ys; // sample values (required)
+  const float *xs; // optional x coords; NULL => 0,1,2,...
+  int count;
+  vv_Color color;
+  vv_PlotKind kind;
+  float width;      // line width / point radius / bar inset (0 => default)
+  const char *name; // optional: shown in the legend
 } vv_PlotSeries;
 typedef struct {
-    float x_min, x_max;   // x data range; leave 0,0 with auto_x to fit data
-    float y_min, y_max;   // y data range; leave 0,0 with auto_y to fit data
-    bool  auto_x, auto_y; // derive the range from the data
-    bool  grid;           // draw gridlines
-    bool  interactive;    // drag to pan, wheel to zoom (double-click resets)
-    float height;         // fixed widget height in px (0 => grow to fill)
+  float x_min, x_max;  // x data range; leave 0,0 with auto_x to fit data
+  float y_min, y_max;  // y data range; leave 0,0 with auto_y to fit data
+  bool auto_x, auto_y; // derive the range from the data
+  bool grid;           // draw gridlines
+  bool interactive;    // drag to pan, wheel to zoom (double-click resets)
+  float height;        // fixed widget height in px (0 => grow to fill)
 } vv_PlotOpts;
 void vv_plot(vv_Ctx *ctx, const char *key, const vv_PlotSeries *series, int n,
              vv_PlotOpts opts);
 
 // An editable curve: draggable control points in [0,1]x[0,1] (y up), connected
-// by a polyline — or, when `smooth`, a Catmull-Rom spline through them. `pts` is
-// the app's array (read-only here). Dragging a point emits `change` with a
+// by a polyline — or, when `smooth`, a Catmull-Rom spline through them. `pts`
+// is the app's array (read-only here). Dragging a point emits `change` with a
 // vv_CurveEdit* payload (index + new position); update() writes it back. Points
 // are drawn in the order given.
-typedef struct { int index; vv_Vec2 pos; } vv_CurveEdit;
+typedef struct {
+  int index;
+  vv_Vec2 pos;
+} vv_CurveEdit;
 uint32_t vv_curve_editor(vv_Ctx *ctx, const char *key, const vv_Vec2 *pts,
                          int count, bool smooth, vv_Msg change);
 static inline const vv_CurveEdit *vv_as_curve_edit(vv_Payload p) {
-    return (const vv_CurveEdit *)p.as_ptr;
+  return (const vv_CurveEdit *)p.as_ptr;
 }
 
 // Rich text: a paragraph of styled inline runs that wrap together at word
@@ -140,16 +207,16 @@ static inline const vv_CurveEdit *vv_as_curve_edit(vv_Payload p) {
 // links via colour + size, since the atlas is a single face). Newlines inside a
 // span are treated as spaces — build separate rich_text blocks for hard breaks.
 typedef struct {
-    const char *text;
-    vv_Color    color;
-    float       size;   // 0 => theme font size
-    vv_FontID   font;   // 0 => theme font; set to a bold/italic face for real weight
+  const char *text;
+  vv_Color color;
+  float size;     // 0 => theme font size
+  vv_FontID font; // 0 => theme font; set to a bold/italic face for real weight
 } vv_Span;
 void vv_rich_text(vv_Ctx *ctx, const char *key, const vv_Span *spans, int n);
 
-// An image leaf sized by `w`/`h`. `img` must outlive the frame (app-persistent);
-// present emits a textured quad over the node's rect. Load a texture with the
-// backend's vv_app_texture_from_rgba.
+// An image leaf sized by `w`/`h`. `img` must outlive the frame
+// (app-persistent); present emits a textured quad over the node's rect. Load a
+// texture with the backend's vv_app_texture_from_rgba.
 uint32_t vv_image(vv_Ctx *ctx, const char *key, const vv_ImageRef *img,
                   vv_Size w, vv_Size h);
 
@@ -160,29 +227,29 @@ uint32_t vv_color_picker(vv_Ctx *ctx, const char *key, vv_Color value,
                          vv_Msg change);
 // Colour <-> payload packing (rgba8 in a 64-bit int; alpha forced opaque here).
 static inline vv_Payload vv_pcolor(vv_Color c) {
-    uint32_t r = (uint32_t)(vv_clampf(c.r, 0, 1) * 255.0f + 0.5f);
-    uint32_t g = (uint32_t)(vv_clampf(c.g, 0, 1) * 255.0f + 0.5f);
-    uint32_t b = (uint32_t)(vv_clampf(c.b, 0, 1) * 255.0f + 0.5f);
-    return (vv_Payload){ .as_int = (int64_t)((r << 16) | (g << 8) | b) };
+  uint32_t r = (uint32_t)(vv_clampf(c.r, 0, 1) * 255.0f + 0.5f);
+  uint32_t g = (uint32_t)(vv_clampf(c.g, 0, 1) * 255.0f + 0.5f);
+  uint32_t b = (uint32_t)(vv_clampf(c.b, 0, 1) * 255.0f + 0.5f);
+  return (vv_Payload){.as_int = (int64_t)((r << 16) | (g << 8) | b)};
 }
 static inline vv_Color vv_as_color(vv_Payload p) {
-    uint64_t v = (uint64_t)p.as_int;
-    return vv_rgb((float)((v >> 16) & 0xff) / 255.0f,
-                  (float)((v >> 8) & 0xff) / 255.0f,
-                  (float)(v & 0xff) / 255.0f);
+  uint64_t v = (uint64_t)p.as_int;
+  return vv_rgb((float)((v >> 16) & 0xff) / 255.0f,
+                (float)((v >> 8) & 0xff) / 255.0f, (float)(v & 0xff) / 255.0f);
 }
 
 // A tree row indented by `depth`, with a disclosure caret when not a `leaf`.
-// Returns true when the row is clicked — the app toggles `expanded` (folders) or
-// selects (leaves). The app owns the hierarchy and recursion.
-bool     vv_tree_item(vv_Ctx *ctx, const char *key, const char *label, int depth,
-                      bool leaf, bool expanded, bool selected);
+// Returns true when the row is clicked — the app toggles `expanded` (folders)
+// or selects (leaves). The app owns the hierarchy and recursion.
+bool vv_tree_item(vv_Ctx *ctx, const char *key, const char *label, int depth,
+                  bool leaf, bool expanded, bool selected);
 
-// A right-click context menu, built in the overlay layer (z-lifts). App owns the
-// open flag + anchor `at`; a scrim dismisses on outside-click/Escape. Put
+// A right-click context menu, built in the overlay layer (z-lifts). App owns
+// the open flag + anchor `at`; a scrim dismisses on outside-click/Escape. Put
 // vv_menu_item()s between begin/end; choosing one also clears `*open`.
-void     vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, bool *open);
-void     vv_context_menu_end(vv_Ctx *ctx);
+void vv_context_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at,
+                           bool *open);
+void vv_context_menu_end(vv_Ctx *ctx);
 
 // Value-bound variants (§12). Instead of a message, these take a vv_Value: the
 // widget reads the current value to render and, on change, emits VV_MSG_BIND so
@@ -190,8 +257,10 @@ void     vv_context_menu_end(vv_Ctx *ctx);
 // from the value's metadata are honored). No update() case needed — bind events
 // apply automatically. Drag widgets bracket the drag as one edit (§12.1).
 uint32_t vv_slider_bound(vv_Ctx *ctx, const char *key, vv_Value v);
-uint32_t vv_drag_number_bound(vv_Ctx *ctx, const char *key, vv_Value v, float speed);
-uint32_t vv_checkbox_bound(vv_Ctx *ctx, const char *key, const char *label, vv_Value v);
+uint32_t vv_drag_number_bound(vv_Ctx *ctx, const char *key, vv_Value v,
+                              float speed);
+uint32_t vv_checkbox_bound(vv_Ctx *ctx, const char *key, const char *label,
+                           vv_Value v);
 uint32_t vv_toggle_bound(vv_Ctx *ctx, const char *key, vv_Value v);
 
 // Single-line editable text field. Edits `buf` (NUL-terminated, capacity `cap`)
@@ -209,14 +278,23 @@ uint32_t vv_text_area(vv_Ctx *ctx, const char *key, char *buf, int cap,
 
 // Calendar date field. Shows `date` (packed as year*10000 + month*100 + day,
 // e.g. 20260719) and opens a month-grid popover to pick a new one. All of its
-// internal interaction — open/close, prev/next month, day hover — is kept in the
-// field's own node state and emits nothing; only choosing a day emits `change`
-// with the new packed date in `.as_int`. A controlled widget: pass the current
-// date, store the emitted one. `vv_date_pack`/`vv_date_unpack` help at the edges.
-uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date, vv_Msg change);
-static inline int32_t vv_date_pack(int y, int m, int d) { return y * 10000 + m * 100 + d; }
-static inline void    vv_date_unpack(int32_t v, int *y, int *m, int *d) {
-    if (y) *y = v / 10000; if (m) *m = (v / 100) % 100; if (d) *d = v % 100;
+// internal interaction — open/close, prev/next month, day hover — is kept in
+// the field's own node state and emits nothing; only choosing a day emits
+// `change` with the new packed date in `.as_int`. A controlled widget: pass the
+// current date, store the emitted one. `vv_date_pack`/`vv_date_unpack` help at
+// the edges.
+uint32_t vv_date_field(vv_Ctx *ctx, const char *key, int32_t date,
+                       vv_Msg change);
+static inline int32_t vv_date_pack(int y, int m, int d) {
+  return y * 10000 + m * 100 + d;
+}
+static inline void vv_date_unpack(int32_t v, int *y, int *m, int *d) {
+  if (y)
+    *y = v / 10000;
+  if (m)
+    *m = (v / 100) % 100;
+  if (d)
+    *d = v % 100;
 }
 
 // A draggable divider for resizable multi-panel layouts. Place it between two
@@ -239,34 +317,34 @@ uint32_t vv_splitter(vv_Ctx *ctx, const char *key, vv_Axis dir, bool trailing,
 enum { VV_Z_MENU = 1000, VV_Z_POPOVER = 1000, VV_Z_TOOLTIP = 2000 };
 
 // A top menu strip. Put vv_menu_title()s between begin/end.
-void     vv_menubar_begin(vv_Ctx *ctx);
-void     vv_menubar_end(vv_Ctx *ctx);
+void vv_menubar_begin(vv_Ctx *ctx);
+void vv_menubar_end(vv_Ctx *ctx);
 // A clickable title in the bar. Self-managing: clicking opens/closes its menu,
 // and once any menu is open, hovering another title switches to it. Returns the
 // node handle; read its actual_rect to position the dropdown.
 uint32_t vv_menu_title(vv_Ctx *ctx, const char *key, const char *label);
 // True while `title_id`'s menu is open — build its dropdown then (it z-lifts).
-bool     vv_menu_is_open(vv_Ctx *ctx, uint32_t title_id);
+bool vv_menu_is_open(vv_Ctx *ctx, uint32_t title_id);
 
 // The dropdown panel at screen point `at` (declare it right after the title).
 // Includes a full-window scrim so clicking away (or Escape) dismisses. Items go
 // between.
-void     vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at);
-bool     vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
-                      const char *shortcut); // true when chosen (closes the menu)
-void     vv_menu_separator(vv_Ctx *ctx);
-void     vv_menu_end(vv_Ctx *ctx);
+void vv_menu_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at);
+bool vv_menu_item(vv_Ctx *ctx, const char *key, const char *label,
+                  const char *shortcut); // true when chosen (closes the menu)
+void vv_menu_separator(vv_Ctx *ctx);
+void vv_menu_end(vv_Ctx *ctx);
 
 // A free-floating popover panel anchored at `at`, `width` wide (z-lifts, so
 // declare it inline). App owns the open flag; a scrim emits `close` on
 // outside-click or Escape. Put content between begin/end.
-void     vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
-                          vv_Msg close);
+void vv_popover_begin(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
+                      vv_Msg close);
 // Same, but dismiss flips `*open` to false directly — pair with vv_ui_state for
 // a popover that needs no app-state field, message, or update() case.
-void     vv_popover_open(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
-                         bool *open);
-void     vv_popover_end(vv_Ctx *ctx);
+void vv_popover_open(vv_Ctx *ctx, const char *key, vv_Vec2 at, float width,
+                     bool *open);
+void vv_popover_end(vv_Ctx *ctx);
 
 // A disclosure section: a clickable header (caret + `label`) over a collapsible
 // body. Returns true when `open` — build the body between begin/end only then;
@@ -276,23 +354,24 @@ void     vv_popover_end(vv_Ctx *ctx);
 //       ... body widgets ...
 //       vv_collapsible_end(c);
 //   }
-bool     vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
-                              bool open, vv_Msg toggle);
-void     vv_collapsible_end(vv_Ctx *ctx);
+bool vv_collapsible_begin(vv_Ctx *ctx, const char *key, const char *label,
+                          bool open, vv_Msg toggle);
+void vv_collapsible_end(vv_Ctx *ctx);
 
-// A modal dialog: a full-window dimming scrim that centers a `width`-wide panel.
-// Clicking the scrim or pressing Escape emits `close`. Z-lifts, so declare it
-// inline in view() (guarded by your open flag). Put content between begin/end.
-void     vv_modal_begin(vv_Ctx *ctx, const char *key, float width, vv_Msg close);
-void     vv_modal_end(vv_Ctx *ctx);
+// A modal dialog: a full-window dimming scrim that centers a `width`-wide
+// panel. Clicking the scrim or pressing Escape emits `close`. Z-lifts, so
+// declare it inline in view() (guarded by your open flag). Put content between
+// begin/end.
+void vv_modal_begin(vv_Ctx *ctx, const char *key, float width, vv_Msg close);
+void vv_modal_end(vv_Ctx *ctx);
 
 // Hover tooltip for `target_id`: after a short hover it fades in a small label
 // below the node. Self-contained (hover timer in node state) and z-lifted, so
 // call it anywhere. Keeps frames alive while timing.
-void     vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text);
+void vv_tooltip(vv_Ctx *ctx, uint32_t target_id, const char *text);
 
 // Labelled helpers.
-void  vv_label(vv_Ctx *ctx, const char *text);
-void  vv_label_muted(vv_Ctx *ctx, const char *text);
+void vv_label(vv_Ctx *ctx, const char *text);
+void vv_label_muted(vv_Ctx *ctx, const char *text);
 
 #endif // VV_WIDGETS_H

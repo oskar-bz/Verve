@@ -227,7 +227,7 @@ static void view(vv_Ctx *c, void *state) {
             uint32_t cn = card_view(c, b, id, false);
             card_node[col][card_count[col]++] = cn;
             if (vv_pressed(c, cn)) vv_emit(c, MSG_GRAB, vv_pi(id));
-            if (vv_double_clicked(c, cn)) vv_emit(c, MSG_DELETE, vv_pi(id));
+            if (vv_right_clicked(c, cn)) vv_emit(c, MSG_DELETE, vv_pi(id));
           }
           // placeholder past the last card (drop_order beyond the built count)
           if (dragging && col == b->drop_col && b->drop_order >= card_count[col]) {

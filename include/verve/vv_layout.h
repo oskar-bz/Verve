@@ -30,8 +30,7 @@ typedef enum {
   VV_ALIGN_SPACE_BETWEEN, // main axis only
 } vv_Align;
 
-#define VV_LAYOUT(...)                                                         \
-  (vv_LayoutDecl) { __VA_ARGS__ }
+#define VV_LAYOUT(...) ((vv_LayoutDecl){__VA_ARGS__})
 
 typedef struct vv_LayoutDecl {
   vv_Axis dir; // ROW | COLUMN
@@ -48,7 +47,8 @@ typedef struct vv_LayoutDecl {
   vv_Rect absolute;   // tooltips, popovers, drags
   int z;              // layer for popovers/overlays
   float aspect_ratio; // >0 locks h from w (escape hatch, §5.3)
-  vv_CursorShape cursor; // pointer shape while hovered (§11); 0 = default/inherit
+  vv_CursorShape
+      cursor; // pointer shape while hovered (§11); 0 = default/inherit
 } vv_LayoutDecl;
 
 // ---- terse size constructors --------------------------------------------

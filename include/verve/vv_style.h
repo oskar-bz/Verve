@@ -11,23 +11,24 @@
 
 // Presence bits for sparse variant overlays.
 typedef enum {
-    VV_STYLE_BG           = 1u << 0,
-    VV_STYLE_FG           = 1u << 1,
-    VV_STYLE_RADIUS       = 1u << 2,
-    VV_STYLE_BORDER_WIDTH = 1u << 3,
-    VV_STYLE_BORDER_COLOR = 1u << 4,
-    VV_STYLE_SHADOW       = 1u << 5,
-    VV_STYLE_OPACITY      = 1u << 6,
-    VV_STYLE_TRANSFORM    = 1u << 7,
-    VV_STYLE_FONT         = 1u << 8,
-    VV_STYLE_FONT_SIZE    = 1u << 9,
+  VV_STYLE_BG = 1u << 0,
+  VV_STYLE_FG = 1u << 1,
+  VV_STYLE_RADIUS = 1u << 2,
+  VV_STYLE_BORDER_WIDTH = 1u << 3,
+  VV_STYLE_BORDER_COLOR = 1u << 4,
+  VV_STYLE_SHADOW = 1u << 5,
+  VV_STYLE_OPACITY = 1u << 6,
+  VV_STYLE_TRANSFORM = 1u << 7,
+  VV_STYLE_FONT = 1u << 8,
+  VV_STYLE_FONT_SIZE = 1u << 9,
+  VV_STYLE_RING = 1u << 10,
 } vv_StyleField;
 
 // Per-property transition control (§6.4). transition_mask bits mark channels
 // that snap instead of springing — for continuously-driven values (§6.4.1).
 typedef enum {
-    VV_TRANSITION_SPRING = 0, // default: animate
-    VV_TRANSITION_INSTANT,    // snap (continuously-driven values, §6.4.1)
+  VV_TRANSITION_SPRING = 0, // default: animate
+  VV_TRANSITION_INSTANT,    // snap (continuously-driven values, §6.4.1)
 } vv_Transition;
 
 // transition_mask bit: skip FLIP for this node's rect (a progress bar / gauge
@@ -38,36 +39,46 @@ typedef enum {
 #define VV_STYLE(...)  (vv_Style) { __VA_ARGS__ }
 
 typedef struct vv_Style {
-    vv_Color   bg;
-    vv_Color   fg;            // text
-    vv_Corners radius;        // per-corner
-    vv_Edges   border_width;  // per-side
-    vv_Color   border_color;
-    vv_Shadow  shadow;
-    float      opacity;
-    vv_Mat23   transform;
-    vv_FontID  font;
-    float      font_size;
+  vv_Color bg;
+  vv_Color fg;           // text
+  vv_Corners radius;     // per-corner
+  vv_Edges border_width; // per-side
+  vv_Color border_color;
+  vv_Shadow shadow;
+  float opacity;
+  vv_Mat23 transform;
+  vv_FontID font;
+  float font_size;
 
-    vv_SpringParams spring;   // per-node override (zero => theme/default)
-    uint32_t   transition_mask; // vv_StyleField bits to snap instead of spring
+  // Focus ring (§7): an outset stroke drawn *outside* the box, so it never
+  // affects layout. `ring_offset` is the gap between the box edge and the ring;
+  // `ring_width` the stroke thickness; `ring_color` its colour (alpha springs,
+  // so setting it only in a `.focus` variant gives a free fade in/out).
+  float ring_width;
+  float ring_offset;
+  vv_Color ring_color;
 
-    uint32_t   set;           // vv_StyleField bits explicitly provided
+  vv_SpringParams spring;   // per-node override (zero => theme/default)
+  uint32_t transition_mask; // vv_StyleField bits to snap instead of spring
 
-    // Declarative state variants (§4.4); NULL = no override.
-    const struct vv_Style *hover, *active, *focus, *disabled;
+  uint32_t set; // vv_StyleField bits explicitly provided
+
+  // Declarative state variants (§4.4); NULL = no override.
+  const struct vv_Style *hover, *active, *focus, *disabled;
 } vv_Style;
 
 // Interpolated actual values with velocities. One spring per animatable
 // scalar/color channel. Populated in the Present phase from `target`.
 typedef struct vv_StyleAnim {
-    vv_Spring bg[4], fg[4], border_color[4], shadow_color[4]; // rgba channels
-    vv_Spring radius[4];
-    vv_Spring border_width[4];
-    vv_Spring opacity;
-    vv_Spring scale;   // transform decomposed: uniform scale + rotation
-    vv_Spring rotation;
-    bool      initialized;
+  vv_Spring bg[4], fg[4], border_color[4], shadow_color[4]; // rgba channels
+  vv_Spring ring_color[4];
+  vv_Spring radius[4];
+  vv_Spring border_width[4];
+  vv_Spring ring_width;
+  vv_Spring opacity;
+  vv_Spring scale; // transform decomposed: uniform scale + rotation
+  vv_Spring rotation;
+  bool initialized;
 } vv_StyleAnim;
 
 #endif // VV_STYLE_H
