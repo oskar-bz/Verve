@@ -125,6 +125,7 @@ typedef struct vv_Ctx {
     float    last_click_time;
     vv_ID    last_click_id;
     bool     wants_build; // this frame's input can change the tree (idle gate)
+    bool     animating;   // vv_animate(): keep rebuilding next frame (idle gate)
 
     // Transactional edit session (§12.1): one undo entry per drag, not per
     // frame. begin_edit snapshots; end_edit commits (bumps edit_generation).
@@ -182,6 +183,15 @@ void vv_set_animation_scale(vv_Ctx *ctx, float scale);
 // set vv_Style.spring itself. Lets an app tune global motion at runtime.
 void vv_set_default_spring(vv_Ctx *ctx, vv_SpringParams params);
 void vv_invalidate(vv_Ctx *ctx);
+
+// Continuous animation. Call vv_animate() during view() to request the next
+// frame; keep calling it each frame to run an animation, stop to let the UI
+// settle to idle. vv_dt()/vv_clock() give the last frame's delta and the
+// accumulated clock (seconds) for driving that motion. (vv_app_run's `tick`
+// callback is the turn-key equivalent for whole-app animation.)
+void  vv_animate(vv_Ctx *ctx);
+float vv_dt(const vv_Ctx *ctx);
+float vv_clock(const vv_Ctx *ctx);
 
 void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input);
 vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx);

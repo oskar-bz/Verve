@@ -44,8 +44,11 @@
 #include "verve/verve.h"
 #include "verve/vv_perf.h"
 
+#ifndef VV_MEASUREFN_DEFINED
+#define VV_MEASUREFN_DEFINED
 typedef vv_Vec2 (*vv_MeasureFn)(void *ud, const char *s, int len, vv_FontID font,
                                 float size, float wrap_width);
+#endif
 
 enum { VV_PERF_HUD_HISTORY = 128 };
 

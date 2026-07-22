@@ -9,7 +9,6 @@
 #include "verve/vv_draw.h"
 #include "vv_sdl_gl.h"
 
-#include <SDL3/SDL.h>
 #include <math.h>
 #include <stdlib.h>
 
@@ -221,46 +220,26 @@ static void update(void *st, vv_Event e) {
   }
 }
 
+// Advance the simulation each frame — the turn-key runner's animation hook, so
+// the whole app is just tick + view + update with no manual loop.
+static void tick(void *st, float dt) {
+  App *a = st;
+  if (!a->playing) return;
+  a->t += dt * a->speed;
+  for (int i = 0; i < NBODY; i++) a->trail[i][a->head] = body_pos(a, i);
+  a->head = (a->head + 1) % TRAIL;
+  if (a->filled < TRAIL) a->filled++;
+}
+
 int main(void) {
-  vv_App *app = vv_app_create("Verve \xc2\xb7 Orrery", 1160, 760);
-  if (!app) return 1;
-  for (const char *const *f = vv_default_font_paths(); *f; f++)
-    if (vv_app_load_font(app, *f)) break;
-
-  vv_Ctx ctx; vv_init(&ctx);
-  vv_set_measure_fn(&ctx, vv_app_measure, app);
-
   App a = { .speed = 1.4f, .count = NBODY, .rings = true, .trails = true,
             .glow = true, .playing = true };
   seed_stars(&a);
-
-  vv_Input in = {0};
-  uint64_t prev = SDL_GetPerformanceCounter();
-  while (vv_app_pump(app, &in)) {
-    uint64_t now = SDL_GetPerformanceCounter();
-    float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency(); prev = now;
-    if (dt > 0.1f) dt = 0.1f;
-
-    if (a.playing) {
-      a.t += dt * a.speed;
-      // sample trails at a steady cadence
-      for (int i = 0; i < NBODY; i++) a.trail[i][a.head] = body_pos(&a, i);
-      a.head = (a.head + 1) % TRAIL;
-      if (a.filled < TRAIL) a.filled++;
-    }
-
-    int w, h; float dpi; vv_app_size(app, &w, &h, &dpi);
-    vv_set_window(&ctx, (float)w, (float)h, dpi);
-    vv_invalidate(&ctx); // continuous animation → rebuild every frame
-
-    vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, update, view, &a);
-
-    vv_app_frame_begin(app, vv_rgb(0.03f, 0.04f, 0.07f));
-    if (cmds) vv_render(vv_app_backend(app), cmds, w, h, dpi);
-    vv_app_set_cursor(app, vv_cursor(&ctx));
-    vv_app_frame_end(app);
-  }
-  vv_shutdown(&ctx);
-  vv_app_destroy(app);
-  return 0;
+  return vv_app_run(&(vv_AppDesc){
+      .title = "Verve \xc2\xb7 Orrery", .width = 1160, .height = 760,
+      .clear = vv_rgb(0.03f, 0.04f, 0.07f),
+      .update = update, .view = view, .state = &a,
+      .tick = tick,        // #1: continuous animation, no manual loop
+      .devtools = true,    // #4: F12 inspector, F11 perf HUD
+  });
 }

@@ -10,8 +10,7 @@
 #include "verve/verve.h"
 #include "vv_sdl_gl.h"
 
-#define VV_INSPECT_IMPL
-#include "vv_inspect.h"
+#include "vv_inspect.h"  // implementation ships in the GL backend
 
 #include <SDL3/SDL.h>
 #include <stdio.h>

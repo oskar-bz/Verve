@@ -105,6 +105,14 @@ typedef struct {
   vv_ViewFn          view;          // required
   void              *state;         // passed to update/view
   bool               clipboard;     // bind the OS clipboard (for text editors)
+  // Optional per-frame hook for animation: advance `state` by `dt` seconds
+  // before the frame is built. Setting it switches the runner to continuous
+  // rendering (no idle), so time-based motion "just works" without a manual
+  // loop. Inside view() you can also call vv_animate()/vv_dt()/vv_clock().
+  void             (*tick)(void *state, float dt);
+  // Attach the built-in devtools overlays (F12 = node inspector, F11 = perf
+  // HUD). Zero-setup debugging; costs nothing until toggled on at runtime.
+  bool               devtools;
 } vv_AppDesc;
 
 int vv_app_run(const vv_AppDesc *desc);

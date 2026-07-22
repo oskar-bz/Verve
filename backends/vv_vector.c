@@ -220,6 +220,28 @@ uint32_t vv_icon(vv_Ctx *ctx, vv_Vector *v, const char *key, vv_Icon icon,
     return vv_image(ctx, key, r, vv_fixed(px), vv_fixed(px));
 }
 
+bool vv_icon_button(vv_Ctx *ctx, vv_Vector *v, const char *key, vv_Icon icon,
+                    float px, float dpi, vv_Color tint, vv_IconBtnStyle style) {
+    const vv_Theme *t = vv_theme();
+    bool solid = style == VV_ICON_BTN_SOLID;
+    if (tint.a == 0.0f) tint = solid ? t->text_on_brand : t->text_secondary;
+    float pad = px * 0.5f;
+    uint32_t id = vv_box_keyed(
+        ctx, key, strlen(key),
+        VV_LAYOUT(.padding = vv_all(pad), .main = VV_ALIGN_CENTER,
+                  .cross = VV_ALIGN_CENTER),
+        VV_STYLE(.bg = solid ? t->brand_primary : (vv_Color){0},
+                 .radius = solid ? vv_r(9999.0f) : vv_r(t->radius_md),
+                 .hover  = solid ? &(vv_Style){ .bg = t->brand_hover }
+                                 : &(vv_Style){ .bg = t->control_bg_hover },
+                 .active = solid ? &(vv_Style){ .bg = t->brand_active }
+                                 : &(vv_Style){ .bg = t->control_bg_active }));
+    char ik[48]; snprintf(ik, sizeof ik, "%s.i", key);
+    vv_icon(ctx, v, ik, icon, px, dpi, tint);
+    vv_end_box(ctx);
+    return vv_clicked(ctx, id);
+}
+
 // ---- svg -------------------------------------------------------------------
 
 static vv_SvgDoc *svg_wrap(cr_svg *doc) {

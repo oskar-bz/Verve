@@ -100,20 +100,11 @@ static void redraw_art(App *a, int sz) {
   vv_canvas_commit(a->art);
 }
 
-// ---- an icon button (polled, not message-based) ----------------------------
+// A ghost icon button bound to this app's vector services (the built-in
+// vv_icon_button does the box + hover/press + hit-test).
 static bool icon_btn(vv_Ctx *c, App *a, const char *key, vv_Icon ic, float px,
-                     vv_Color tint, bool primary) {
-  const vv_Theme *t = vv_theme();
-  uint32_t id = vv_box_keyed(c, key, strlen(key),
-      VV_LAYOUT(.padding = vv_all(primary ? 18.0f : 11.0f),
-                .main = VV_ALIGN_CENTER, .cross = VV_ALIGN_CENTER),
-      VV_STYLE(.bg = primary ? t->accent : (vv_Color){0},
-               .radius = vv_r(primary ? 999 : 10),
-               .hover = primary ? NULL : &(vv_Style){ .bg = t->control_bg_hover }));
-  char ik[24]; snprintf(ik, sizeof ik, "%s_i", key);
-  vv_icon(c, a->vec, ik, ic, px, a->dpi, tint);
-  vv_end_box(c);
-  return vv_clicked(c, id);
+                     vv_Color tint) {
+  return vv_icon_button(c, a->vec, key, ic, px, a->dpi, tint, VV_ICON_BTN_GHOST);
 }
 
 static void view(vv_Ctx *c, void *st) {
@@ -142,7 +133,7 @@ static void view(vv_Ctx *c, void *st) {
           vv_text(c, tr->artist, VV_STYLE(.fg = t->text_muted, .font_size = 15));
         }
         if (icon_btn(c, a, "like", a->heart, 24,
-                     a->liked ? vv_rgb(0.95f, 0.35f, 0.45f) : t->text_muted, false))
+                     a->liked ? vv_rgb(0.95f, 0.35f, 0.45f) : t->text_muted))
           a->liked = !a->liked;
       }
 
@@ -160,12 +151,13 @@ static void view(vv_Ctx *c, void *st) {
       VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
                           .main = VV_ALIGN_CENTER, .gap = 10), VV_STYLE(.bg = {0})) {
         if (icon_btn(c, a, "shuffle", a->shuf, 20,
-                     a->shuffle ? t->accent : t->text_muted, false)) a->shuffle = !a->shuffle;
-        if (icon_btn(c, a, "prev", a->prev, 24, t->text, false))
+                     a->shuffle ? t->accent : t->text_muted)) a->shuffle = !a->shuffle;
+        if (icon_btn(c, a, "prev", a->prev, 24, t->text))
           { a->track = (a->track + NTRACK - 1) % NTRACK; a->pos = 0; }
-        if (icon_btn(c, a, "pp", a->playing ? a->pause : a->play, 30, t->on_accent, true))
+        if (vv_icon_button(c, a->vec, "pp", a->playing ? a->pause : a->play, 30,
+                           a->dpi, t->on_accent, VV_ICON_BTN_SOLID))
           a->playing = !a->playing;
-        if (icon_btn(c, a, "next", a->next, 24, t->text, false))
+        if (icon_btn(c, a, "next", a->next, 24, t->text))
           { a->track = (a->track + 1) % NTRACK; a->pos = 0; }
         // volume
         VV_BOX(c, VV_LAYOUT(.w = vv_fixed(84)), VV_STYLE(.bg = {0}))

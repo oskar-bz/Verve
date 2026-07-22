@@ -63,6 +63,16 @@ const vv_ImageRef *vv_vector_icon_ref(vv_Vector *v, vv_Icon icon, float px,
 uint32_t vv_icon(vv_Ctx *ctx, vv_Vector *v, const char *key, vv_Icon icon,
                  float px, float dpi, vv_Color tint);
 
+// A clickable icon button: a padded, rounded hit target around a tinted icon,
+// with theme-driven hover/press fills. Returns true the frame it is clicked
+// (poll it like vv_tree_item). GHOST is a bare glyph that lights up on hover
+// (toolbars, secondary actions); SOLID paints the brand fill as a pill (a
+// primary action, e.g. a play button). `tint` colours the glyph; pass a
+// zero-alpha colour ({0}) to take a sensible default for the style.
+typedef enum { VV_ICON_BTN_GHOST, VV_ICON_BTN_SOLID } vv_IconBtnStyle;
+bool vv_icon_button(vv_Ctx *ctx, vv_Vector *v, const char *key, vv_Icon icon,
+                    float px, float dpi, vv_Color tint, vv_IconBtnStyle style);
+
 // ---- SVG: full-colour documents rasterized to a texture ---------------------
 typedef struct vv_SvgDoc vv_SvgDoc;
 

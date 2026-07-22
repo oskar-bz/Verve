@@ -14,7 +14,7 @@ CompileFlags:
     - -Iinclude
     - -Ibackends
     - -Ivendor
-    - -Iexamples/inspect
+    - -Idevtools
     - -I../craz/include
     - -DVV_PERF
     - -Wall

@@ -35,7 +35,7 @@ CRAZ_DIR ?= ../craz
 CRAZ_LIB := $(CRAZ_DIR)/libcraz.a
 
 # SDL3 + OpenGL backend (libepoxy loader) + craz (vendored stb lives inside craz).
-GUI_CFLAGS := -std=c11 -Iinclude -Ibackends -Ivendor -I$(CRAZ_DIR)/include \
+GUI_CFLAGS := -std=c11 -Iinclude -Ibackends -Ivendor -Idevtools -I$(CRAZ_DIR)/include \
               -Wall -Wextra -g -O2 $(shell pkg-config --cflags sdl3)
 GUI_LIBS   := $(shell pkg-config --libs sdl3) -lepoxy -lGL $(CRAZ_LIB)
 
@@ -88,7 +88,7 @@ $(BUILD)/gui_demo: examples/gui_demo.c $(GUI_BACKEND) $(LIB)
 # build still runs (the HUD just reports that instrumentation is off).
 $(BUILD)/perf_demo: examples/perf_demo.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
-	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) -Iexamples/inspect $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/orrery: examples/orrery.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -115,7 +115,7 @@ $(BUILD)/habit: examples/habit.c $(GUI_BACKEND) $(LIB)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/inspector: examples/inspector.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
-	$(CC) $(GUI_CFLAGS) -Iexamples/inspect $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/transitions: examples/transitions.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@

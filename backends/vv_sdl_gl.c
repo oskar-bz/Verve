@@ -24,6 +24,15 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+// Ship the drop-in devtools (node inspector + performance HUD) as part of the
+// backend: their single-header implementations compile here once, so vv_app_run
+// can attach them behind vv_AppDesc.devtools and any app can link them without a
+// second copy. They are backend-agnostic (core-only) overlays.
+#define VV_INSPECT_IMPL
+#include "vv_inspect.h"
+#define VV_PERF_HUD_IMPL
+#include "vv_perf_hud.h"
+
 // One backend, two shader programs: a rounded-box SDF for rects (fill + border +
 // shadow + AA in one pass, §9.1) and a textured-quad shader for glyphs.
 
@@ -1297,9 +1306,27 @@ int vv_app_run(const vv_AppDesc *d) {
     vv_set_measure_fn(&ctx, vv_app_measure, app);
     // Idle mode stops rendering once the UI settles — but VV_SHOT counts
     // rendered frames to know when the enter animation is done, so keep the
-    // render loop running continuously while capturing.
-    vv_set_idle_mode(&ctx, getenv("VV_SHOT") == NULL);
+    // render loop running continuously while capturing. A `tick` app animates
+    // every frame, so it opts out of idle too.
+    vv_set_idle_mode(&ctx, getenv("VV_SHOT") == NULL && d->tick == NULL);
     if (d->clipboard) vv_app_bind_clipboard(app, &ctx);
+
+    // Optional built-in devtools: a node inspector (F12) and perf HUD (F11),
+    // attached as overlays over the app. Both start closed so they cost nothing
+    // until summoned; when open they route the pointer away from the app.
+    vv_Inspector ins; vv_PerfHud hud;
+    bool f12_prev = false, f11_prev = false;
+    if (d->devtools) {
+        vv_inspect_init(&ins, &ctx, vv_app_measure, app);   ins.open = false;
+        vv_perf_hud_init(&hud, &ctx, vv_app_measure, app);  hud.open = false;
+        // Start an overlay open via env, e.g. VV_DEVTOOLS=perf|inspect|all —
+        // handy for screenshots and "always-on" debugging sessions.
+        const char *dv = getenv("VV_DEVTOOLS");
+        if (dv) {
+            ins.open = strstr(dv, "inspect") || strstr(dv, "all");
+            hud.open = strstr(dv, "perf")    || strstr(dv, "all");
+        }
+    }
 
     vv_Color clear = d->clear.a > 0.0f ? d->clear : vv_rgb(0.11f, 0.12f, 0.14f);
     vv_Input in = {0};
@@ -1314,16 +1341,39 @@ int vv_app_run(const vv_AppDesc *d) {
         vv_app_size(app, &ww, &hh, &dpi);
         vv_set_window(&ctx, (float)ww, (float)hh, dpi);
 
-        vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &in, d->update, d->view, d->state);
+        if (d->tick) { d->tick(d->state, dt); vv_invalidate(&ctx); }
+
+        // Devtools toggles + pointer routing. Splits are pass-through when the
+        // overlay is closed, so this is free until F11/F12 is pressed.
+        vv_Input app_in = in;
+        vv_CommandBuffer *ov_ins = NULL, *ov_hud = NULL;
+        if (d->devtools) {
+            const bool *ks = SDL_GetKeyboardState(NULL);
+            bool f12 = ks[SDL_SCANCODE_F12], f11 = ks[SDL_SCANCODE_F11];
+            if (f12 && !f12_prev) vv_inspect_toggle(&ins);
+            if (f11 && !f11_prev) vv_perf_hud_toggle(&hud);
+            f12_prev = f12; f11_prev = f11;
+            app_in = vv_inspect_split(&ins, app_in, (float)ww, (float)hh);
+            app_in = vv_perf_hud_split(&hud, app_in, (float)ww, (float)hh);
+        }
+
+        vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &app_in, d->update, d->view, d->state);
+        if (d->devtools) {
+            ov_ins = vv_inspect_render(&ins, dt, (float)ww, (float)hh, dpi);
+            ov_hud = vv_perf_hud_render(&hud, dt, (float)ww, (float)hh, dpi);
+        }
         vv_app_set_cursor(app, vv_cursor(&ctx));
-        if (cmds) {
+        if (cmds || ov_ins || ov_hud) {
             vv_app_frame_begin(app, clear);
-            vv_render(vv_app_backend(app), cmds, ww, hh, dpi);
+            if (cmds)   vv_render(vv_app_backend(app), cmds, ww, hh, dpi);
+            if (ov_ins) vv_render(vv_app_backend(app), ov_ins, ww, hh, dpi);
+            if (ov_hud) vv_render(vv_app_backend(app), ov_hud, ww, hh, dpi);
             vv_app_frame_end(app);
         } else {
             vv_app_wait_event(app, 16); // idle: sleep instead of busy-spinning
         }
     }
+    if (d->devtools) { vv_shutdown(&ins.ctx); vv_shutdown(&hud.ctx); }
     vv_shutdown(&ctx);
     vv_app_destroy(app);
     return 0;

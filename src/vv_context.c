@@ -94,6 +94,15 @@ void vv_set_default_spring(vv_Ctx *ctx, vv_SpringParams p) {
 }
 void vv_invalidate(vv_Ctx *ctx)                     { ctx->tree_dirty = true; }
 
+// Request another frame after this one — the animation counterpart to
+// vv_invalidate. Unlike tree_dirty (cleared by end_frame), `animating` survives
+// the build, so calling it *inside* view() keeps a self-driven animation going:
+// each frame's view() re-arms the next. Stop calling it and the UI settles to
+// idle. Reads vv_dt()/vv_clock() for the elapsed/absolute time.
+void  vv_animate(vv_Ctx *ctx)                       { ctx->animating = true; }
+float vv_dt(const vv_Ctx *ctx)                      { return ctx->dt; }
+float vv_clock(const vv_Ctx *ctx)                   { return ctx->clock; }
+
 // ---- declarative state variants (§4.4, §7.1) -----------------------------
 
 // Overlay a sparse variant onto the base target. A field applies if its
@@ -382,11 +391,13 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
         down_edge || moved_sub || ctx->active_id != 0 || ctx->sb_drag != 0 ||
         ctx->input.wheel != 0.0f || ctx->input.key_count > 0 ||
         ctx->input.text_len > 0 || ctx->input.preedit_len > 0 ||
-        ctx->tree_dirty || ctx->frame_index == 1 ||
+        ctx->tree_dirty || ctx->frame_index == 1 || ctx->animating ||
         // A moving rect spring means some parent's actual_rect changed; widgets
         // that read it at build time (slider fill, tab indicator, popovers) must
         // rebuild to follow it, even with no input (e.g. a window resize).
         ctx->unsettled_rects > 0;
+    // Consumed for this frame; view() re-arms it via vv_animate() to keep going.
+    ctx->animating = false;
     VV_PERF_END(ctx, VV_PERF_INPUT);
 }
 

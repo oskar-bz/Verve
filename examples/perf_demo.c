@@ -13,8 +13,7 @@
 #include "verve/verve.h"
 #include "vv_sdl_gl.h"
 
-#define VV_PERF_HUD_IMPL
-#include "vv_perf_hud.h"
+#include "vv_perf_hud.h"  // implementation ships in the GL backend
 
 #include <SDL3/SDL.h>
 #include <math.h>
