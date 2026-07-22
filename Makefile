@@ -6,6 +6,9 @@ DEPFLAGS := -MMD -MP
 LDFLAGS  ?=
 LDLIBS   ?= -lm -lpthread
 
+# Performance instrumentation: make VV_PERF=1 enables granular phase timing.
+PERF_CFLAGS := $(if $(VV_PERF),-DVV_PERF,)
+
 BUILD    := build
 SRC      := $(wildcard src/*.c)
 OBJ      := $(patsubst src/%.c,$(BUILD)/%.o,$(SRC))
@@ -36,7 +39,7 @@ $(LIB): $(OBJ)
 
 $(BUILD)/%.o: src/%.c
 	@mkdir -p $(BUILD)
-	$(CC) $(CFLAGS) $(DEPFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(PERF_CFLAGS) -c $< -o $@
 
 -include $(OBJ:.o=.d)
 
@@ -126,7 +129,6 @@ $(BUILD)/async: examples/async.c backends/vv_sdl_gl.c $(LIB)
 $(BUILD)/dragdrop: examples/dragdrop.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
-
 # Hot-reload demo: the view is a .so the host dlopen's and swaps on change.
 # Run ./build/hotdemo, then edit examples/hot/view.c and `make hot` to rebuild
 # just the .so — the running host picks it up and keeps its state.

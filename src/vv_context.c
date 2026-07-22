@@ -19,6 +19,7 @@ void vv_init(vv_Ctx *ctx) {
     vv_arena_init(&ctx->frame, 1 << 18);      // 256 KiB, reset on build frames
     vv_arena_init(&ctx->present, 1 << 18);    // 256 KiB, reset every frame
     vv_pool_init(&ctx->pool, &ctx->persistent, 256);
+    VV_PERF_INIT(ctx);                         // §X: opt-in perf instrumentation
 
     ctx->animation_scale = 1.0f;
     ctx->default_spring = VV_DEFAULT_SPRING;
@@ -327,6 +328,7 @@ static void reconcile(vv_Ctx *ctx) {
 // frame arena or the tree — so a present-only frame can follow without losing
 // the last build's node text (which lives in the frame arena).
 static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
+    VV_PERF_START(ctx, VV_PERF_INPUT);
     ctx->frame_index++;
     ctx->dt = dt;
     ctx->clock += dt;
@@ -381,12 +383,14 @@ static void input_step(vv_Ctx *ctx, float dt, const vv_Input *input) {
         // that read it at build time (slider fill, tab indicator, popovers) must
         // rebuild to follow it, even with no input (e.g. a window resize).
         ctx->unsettled_rects > 0;
+    VV_PERF_END(ctx, VV_PERF_INPUT);
 }
 
 // Step 2: reset the root and build stack so view code can populate the tree.
 // Resets the frame arena — the previous build's text/scratch is dead once we
 // rebuild.
 static void build_begin(vv_Ctx *ctx) {
+    VV_PERF_START(ctx, VV_PERF_BUILD_BEGIN);
     vv_arena_reset(&ctx->frame);
 
     vv_Node *root = vv_pool_get(&ctx->pool, ctx->root);
@@ -400,9 +404,11 @@ static void build_begin(vv_Ctx *ctx) {
     ctx->stack[0]       = ctx->root;
     ctx->seq_counter[0] = 0;
     ctx->in_build       = true;
+    VV_PERF_END(ctx, VV_PERF_BUILD_BEGIN);
 }
 
 void vv_begin_frame(vv_Ctx *ctx, float dt, const vv_Input *input) {
+    VV_PERF_START(ctx, VV_PERF_FRAME_TOTAL);
     input_step(ctx, dt, input);
     build_begin(ctx);
 }
@@ -412,18 +418,27 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
     ctx->in_build = false;
 
     // --- Build phase (§4.1 steps 1-5) ---
+    VV_PERF_START(ctx, VV_PERF_RECONCILE);
     reconcile(ctx);
+    VV_PERF_END(ctx, VV_PERF_RECONCILE);
+
+    VV_PERF_START(ctx, VV_PERF_LAYOUT);
     vv_layout_run(ctx);
+    VV_PERF_END(ctx, VV_PERF_LAYOUT);
 
     // --- Present phase (§4.1 steps 6-8) ---
-    ctx->unsettled_springs = 0;   // vv_present recounts still-animating springs
+    ctx->unsettled_springs = 0;
     ctx->unsettled_rects = 0;
+    VV_PERF_START(ctx, VV_PERF_PRESENT);
     vv_present(ctx);
+    VV_PERF_END(ctx, VV_PERF_PRESENT);
 
     ctx->tree_dirty = false;
     ctx->last_tier  = VV_TIER_BUILD;
+    ctx->perf.perf.tier_build++;
     // A drag ends when the button is up; drop targets had their chance in view().
     if (!ctx->input.mouse_down) ctx->dnd_dragging = false;
+    VV_PERF_END(ctx, VV_PERF_FRAME_TOTAL);
     return &ctx->cmds;
 }
 
@@ -431,10 +446,15 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 // and re-emit the existing tree. Used when nothing changed but animations are
 // still running (§4.2). The frame arena is untouched, so node text stays valid.
 static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
+    VV_PERF_START(ctx, VV_PERF_FRAME_TOTAL);
     ctx->unsettled_springs = 0;
     ctx->unsettled_rects = 0;
+    VV_PERF_START(ctx, VV_PERF_PRESENT);
     vv_present(ctx);
+    VV_PERF_END(ctx, VV_PERF_PRESENT);
     ctx->last_tier = VV_TIER_PRESENT;
+    ctx->perf.perf.tier_present++;
+    VV_PERF_END(ctx, VV_PERF_FRAME_TOTAL);
     return &ctx->cmds;
 }
 
@@ -472,6 +492,7 @@ vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
     // every frame (simplest, always-fresh).
     if (ctx->idle_mode && ctx->unsettled_springs == 0) {
         ctx->last_tier = VV_TIER_IDLE;
+        ctx->perf.perf.tier_idle++;
         return NULL;
     }
     return present_only(ctx);

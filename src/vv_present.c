@@ -328,14 +328,11 @@ static void emit_scrollbar(vv_Ctx *ctx, vv_Node *n, float inh) {
 
 // ---- tree walk ------------------------------------------------------------
 
+
 static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op,
                              float scroll_ox, float scroll_oy) {
     vv_Node *n = vv_pool_get(&ctx->pool, index);
 
-    // Overlay lift (§ overlays): a node with z>0 is painted in a later pass,
-    // above the normal tree, in ascending z. Collect and skip it here; the
-    // deferred pass re-enters with emitting_overlay set so it (and its subtree)
-    // animate and emit unclipped, on top. Mirrors the hit-test ordering.
     if (n->decl.z > 0 && !ctx->emitting_overlay) {
         int cap = (int)(sizeof ctx->overlays / sizeof ctx->overlays[0]);
         if (ctx->overlay_count < cap) ctx->overlays[ctx->overlay_count++] = index;
@@ -344,8 +341,8 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
 
     vv_SpringParams p = node_params(ctx, n);
 
-    // Birth: snap actual to target, no animation on first appearance of style
-    // (§3.3, §6.6). Enter spring runs 0 -> 1.
+    // ---- STYLE: init, retarget, step ----
+    VV_PERF_START(ctx, VV_PERF_PRESENT_STYLE);
     if (!n->actual.initialized) {
         style_init(n, p);
         rect_init(n, p);
@@ -360,21 +357,21 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
         style_step(ctx, n, dt);
     }
     if (!(n->flags & VV_FLAG_EXITING)) step1(ctx, &n->enter, dt);
+    VV_PERF_END(ctx, VV_PERF_PRESENT_STYLE);
 
-    // FLIP is scroll-free (chases layout_rect); scroll is a separate, snappy
-    // offset baked into actual_rect so hit testing sees scrolled positions but
-    // FLIP doesn't fight the continuous scroll motion (§6.4.1).
+    // ---- RECT: FLIP ----
+    VV_PERF_START(ctx, VV_PERF_PRESENT_RECT);
     rect_animate(ctx, n, dt);
     n->actual_rect = vv_rect(n->rx.x + scroll_ox, n->ry.x + scroll_oy, n->rw.x, n->rh.x);
+    VV_PERF_END(ctx, VV_PERF_PRESENT_RECT);
 
-    // Keep scroll offsets clamped as content size changes, then advance them.
+    // ---- SCROLL: offset stepping + fade ----
+    VV_PERF_START(ctx, VV_PERF_PRESENT_SCROLL);
     vv_spring_retarget(&n->scroll_x, vv_clampf(n->scroll_x.target, 0, n->scroll_max_x));
     vv_spring_retarget(&n->scroll_y, vv_clampf(n->scroll_y.target, 0, n->scroll_max_y));
     step1(ctx, &n->scroll_x, dt);
     step1(ctx, &n->scroll_y, dt);
 
-    // Scrollbar fade: bright while the offset moves or the thumb is dragged, then
-    // decays. Keep the frame unsettled while it fades so idle mode lets it finish.
     if (n->decl.scroll_x || n->decl.scroll_y) {
         bool moving = fabsf(n->scroll_x.v) > 1.0f || fabsf(n->scroll_y.v) > 1.0f;
         if (moving || n->id == ctx->sb_drag) n->scroll_activity = 1.0f;
@@ -382,18 +379,16 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
         if (n->scroll_activity < 0.0f) n->scroll_activity = 0.0f;
         if (n->scroll_activity > 0.01f) ctx->unsettled_springs++;
     }
+    VV_PERF_END(ctx, VV_PERF_PRESENT_SCROLL);
 
+    // ---- EMIT: scissor + node + children ----
+    VV_PERF_START(ctx, VV_PERF_PRESENT_EMIT);
     bool clips = n->decl.clip || n->decl.scroll_x || n->decl.scroll_y;
     if (clips) { push_cmd(ctx)->kind = VV_CMD_SCISSOR_PUSH; ctx->cmds.items[ctx->cmds.count-1].as.scissor = n->actual_rect; }
-
     emit_node(ctx, n, inh_op);
 
-    // Descendants shift by this node's scroll offset (scrolling down moves
-    // content up, hence subtraction).
     float child_ox = scroll_ox - n->scroll_x.x;
     float child_oy = scroll_oy - n->scroll_y.x;
-
-    // Opacity inherits multiplicatively so a fading parent fades its subtree.
     float child_inh = inh_op * (n->flags & VV_FLAG_EXITING ? n->exit.x : n->enter.x)
                             * (n->actual.opacity.x > 0 ? n->actual.opacity.x : 1.0f);
     for (uint32_t c = n->first_child; c != VV_NIL;) {
@@ -405,6 +400,7 @@ static void animate_and_emit(vv_Ctx *ctx, uint32_t index, float dt, float inh_op
 
     if (clips) push_cmd(ctx)->kind = VV_CMD_SCISSOR_POP;
     if (n->decl.scroll_x || n->decl.scroll_y) emit_scrollbar(ctx, n, inh_op);
+    VV_PERF_END(ctx, VV_PERF_PRESENT_EMIT);
 }
 
 // Detached exiting nodes (§3.3): drive their exit spring and paint the corpse
@@ -414,10 +410,12 @@ static void present_exiting(vv_Ctx *ctx, float dt) {
     for (uint32_t i = 0; i < pool->count; i++) {
         vv_Node *n = &pool->nodes[i];
         if (!(n->flags & VV_FLAG_ALIVE) || !(n->flags & VV_FLAG_EXITING)) continue;
-        if (n->last_touched_frame == ctx->frame_index) continue; // still in-tree
+        if (n->last_touched_frame == ctx->frame_index) continue;
+        VV_PERF_START(ctx, VV_PERF_PRESENT_EXITING);
         step1(ctx, &n->exit, dt);
-        if (n->flags & VV_FLAG_TEXT) continue;
+        if ((n->flags & VV_FLAG_TEXT) || n->draw) continue;
         emit_node(ctx, n, 1.0f);
+        VV_PERF_END(ctx, VV_PERF_PRESENT_EXITING);
     }
 }
 

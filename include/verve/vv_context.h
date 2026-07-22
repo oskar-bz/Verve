@@ -10,6 +10,7 @@
 #include "vv_event.h"
 #include "vv_id.h"
 #include "vv_node.h"
+#include "vv_perf.h"
 #include "vv_str.h"
 
 // Editing/navigation keys routed to the focused node (§11.3). Printable text
@@ -151,6 +152,9 @@ typedef struct vv_Ctx {
     vv_CommandBuffer cmds;
 
     vv_FrameTier last_tier;
+
+    // Performance instrumentation (opt-in via -DVV_PERF, §X).
+    struct { bool active; vv_PerfCtx perf; } perf;
 } vv_Ctx;
 
 void vv_init(vv_Ctx *ctx);

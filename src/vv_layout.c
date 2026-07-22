@@ -439,10 +439,12 @@ void vv_layout_run(vv_Ctx *ctx) {
 
     vv_Node *r = P(root);
     r->layout_rect = window;      // root fills the window; position at its origin
-    pass1_width(pool, root);
-    pass2_width(pool, root, window.w);
-    pass3_height(pool, root);
-    pass4_height(pool, root, window.h);
+
+    VV_PERF_START(ctx, VV_PERF_LAYOUT_P1);  pass1_width(pool, root);  VV_PERF_END(ctx, VV_PERF_LAYOUT_P1);
+    VV_PERF_START(ctx, VV_PERF_LAYOUT_P2);  pass2_width(pool, root, window.w); VV_PERF_END(ctx, VV_PERF_LAYOUT_P2);
+    VV_PERF_START(ctx, VV_PERF_LAYOUT_P3);  pass3_height(pool, root); VV_PERF_END(ctx, VV_PERF_LAYOUT_P3);
+    VV_PERF_START(ctx, VV_PERF_LAYOUT_P4);  pass4_height(pool, root, window.h); VV_PERF_END(ctx, VV_PERF_LAYOUT_P4);
+
     position_tree(pool, root);
 
     g_ctx = NULL;
