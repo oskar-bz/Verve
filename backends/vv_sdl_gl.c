@@ -43,6 +43,12 @@ typedef struct {
     cr_glyph_cache *cache;
     GLuint          atlas;              // GL texture mirroring the A8 cache
     int             atlas_w, atlas_h;
+    // Retained TTF + stbtt view of the same face, used for pair kerning (craz
+    // owns coverage only and leaves shaping/kerning to the consumer). NULL/false
+    // when the face has no usable kern table.
+    unsigned char  *ttf;
+    stbtt_fontinfo  info;
+    bool            has_info;
 } Font;
 
 // Shared across a window and its GL-sharing children: the font table and one
@@ -299,15 +305,18 @@ vv_FontID vv_app_load_font(vv_App *a, const char *path) {
     if (fread(ttf, 1, (size_t)sz, f) != (size_t)sz) { fclose(f); free(ttf); return 0; }
     fclose(f);
 
-    cr_font *cf = cr_font_load(ttf, (int)sz, 0);
-    free(ttf);                       // craz copies the font data on load
-    if (!cf) return 0;
+    cr_font *cf = cr_font_load(ttf, (int)sz, 0);  // craz copies the font data
+    if (!cf) { free(ttf); return 0; }
 
     Font *fo = &fs->fonts[fs->font_count];
     fo->font  = cf;
     fo->cache = cr_glyph_cache_new(cf, GLYPH_ATLAS_W, GLYPH_ATLAS_H, SUBPIXEL_PHASES);
     fo->loaded = fo->cache != NULL;
-    if (!fo->loaded) { cr_font_free(cf); return 0; }
+    if (!fo->loaded) { cr_font_free(cf); free(ttf); return 0; }
+    // Keep our own TTF copy alive for stbtt pair kerning (see glyph_pair_kern).
+    fo->ttf = ttf;
+    fo->has_info = stbtt_InitFont(&fo->info, ttf,
+                                  stbtt_GetFontOffsetForIndex(ttf, 0)) != 0;
     if (!fs->bake) fs->bake = cr_context_new();
     return (vv_FontID)fs->font_count++;
 }
@@ -327,6 +336,22 @@ static float glyph_advance(FontSystem *fs, vv_FontID font, uint32_t cp, float si
     if (cr_glyph_cache_get(fs->fonts[fi].cache, fs->bake, (int)cp, size, 0.0f, &e))
         return e.advance;
     return 0;
+}
+
+// Pair-kerning adjustment (device px) between two codepoints on the same face,
+// from the font's legacy `kern` table via stbtt. craz supplies per-glyph advances
+// but no kerning, so without this pairs like "To", "AV", "r." render too loose.
+// Returns 0 when the face has no kern data or either glyph is missing.
+static float glyph_pair_kern(FontSystem *fs, int fi, uint32_t prev, uint32_t cp,
+                             float dsize) {
+    Font *f = &fs->fonts[fi];
+    if (!f->has_info || !prev) return 0;
+    int g1 = stbtt_FindGlyphIndex(&f->info, (int)prev);
+    int g2 = stbtt_FindGlyphIndex(&f->info, (int)cp);
+    if (!g1 || !g2) return 0;
+    int k = stbtt_GetGlyphKernAdvance(&f->info, g1, g2);
+    if (!k) return 0;
+    return (float)k * stbtt_ScaleForPixelHeight(&f->info, dsize);
 }
 
 // Walk a UTF-8 string, measuring (emit_font < 0) or emitting textured quads.
@@ -355,11 +380,13 @@ static vv_Vec2 text_layout(vv_App *a, vv_FontID font, const char *s, int len,
     float ox_d = ox * dpi, oy_d = oy * dpi;
     float x = 0, y = 0, maxw = 0;             // device px along the current line
     int i = 0;
+    uint32_t prev_cp = 0; int prev_fi = -1;   // last glyph on the line, for kerning
     while (i < len) {
         int adv = 1;
         uint32_t cp = vv_utf8_decode(s + i, &adv);
 
-        if (cp == '\n') { maxw = fmaxf(maxw, x); x = 0; y += line_h; i += adv; continue; }
+        if (cp == '\n') { maxw = fmaxf(maxw, x); x = 0; y += line_h;
+                          prev_cp = 0; prev_fi = -1; i += adv; continue; }
 
         // Determine this chunk: a run up to the next break opportunity. A space
         // is its own chunk; a CJK codepoint is its own chunk; otherwise a word.
@@ -370,10 +397,14 @@ static vv_Vec2 text_layout(vv_App *a, vv_FontID font, const char *s, int len,
         } else if (is_cjk(cp)) {
             chunk_w = glyph_advance(fs, font, cp, dsize); j += adv;
         } else {
+            uint32_t wprev = 0; int wpfi = -1;
             while (j < len) {
                 int a2 = 1; uint32_t c2 = vv_utf8_decode(s + j, &a2);
                 if (c2 == ' ' || c2 == '\n' || is_cjk(c2)) break;
+                int cfi = resolve_font(fs, font, c2);
+                if (wpfi == cfi) chunk_w += glyph_pair_kern(fs, cfi, wprev, c2, dsize);
                 chunk_w += glyph_advance(fs, font, c2, dsize);
+                wprev = c2; wpfi = cfi;
                 j += a2;
             }
         }
@@ -384,13 +415,18 @@ static vv_Vec2 text_layout(vv_App *a, vv_FontID font, const char *s, int len,
         // ULP past `wrap` — a spurious second line whose taller box then shifts
         // cross-centered text. Sub-pixel slack is invisible for genuine overflow.
         bool breakable = cp != ' ';
-        if (wrap_d > 0 && x > 0 && breakable && (x + chunk_w) > wrap_d + 0.5f) { maxw = fmaxf(maxw, x); x = 0; y += line_h; }
+        if (wrap_d > 0 && x > 0 && breakable && (x + chunk_w) > wrap_d + 0.5f) {
+            maxw = fmaxf(maxw, x); x = 0; y += line_h; prev_cp = 0; prev_fi = -1;
+        }
 
         // Emit / advance the chunk's glyphs.
         for (int k = chunk_start; k < j;) {
             int a2 = 1; uint32_t c2 = vv_utf8_decode(s + k, &a2);
             int fi = resolve_font(fs, font, c2);
             Font *ef = &fs->fonts[fi];
+            // Tuck against the previous glyph on this line (same face only).
+            if (prev_fi == fi) x += glyph_pair_kern(fs, fi, prev_cp, c2, dsize);
+            prev_cp = c2; prev_fi = fi;
             float penx = ox_d + x;
             cr_glyph_entry e;
             if (cr_glyph_cache_get(ef->cache, fs->bake, (int)c2, dsize, penx, &e)) {
@@ -848,6 +884,7 @@ void vv_app_destroy(vv_App *a) {
             if (fo->atlas) glDeleteTextures(1, &fo->atlas);
             if (fo->cache) cr_glyph_cache_free(fo->cache);
             if (fo->font)  cr_font_free(fo->font);
+            free(fo->ttf);
         }
         if (a->fs->bake) cr_context_free(a->fs->bake);
         free(a->fs);

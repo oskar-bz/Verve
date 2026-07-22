@@ -23,7 +23,8 @@ TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 # Headless examples build with the generic rule; windowed demos need SDL3 (and
 # the craz demos need ../craz). Those all get their own explicit GUI rules below.
 DEMO_SRC := $(filter-out examples/gui_demo.c examples/sevenguis.c \
-                         examples/icons.c examples/svgview.c examples/perf_demo.c,\
+                         examples/icons.c examples/svgview.c examples/perf_demo.c \
+                         examples/orrery.c examples/sortlab.c examples/player.c,\
                          $(wildcard examples/*.c))
 DEMO_BIN := $(patsubst examples/%.c,$(BUILD)/%,$(DEMO_SRC))
 
@@ -78,7 +79,7 @@ gui: $(CRAZ_LIB) $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD
      $(BUILD)/table $(BUILD)/finder $(BUILD)/playground $(BUILD)/bindings \
      $(BUILD)/showcase $(BUILD)/theme_editor $(BUILD)/panels $(BUILD)/dates $(BUILD)/gallery $(BUILD)/i18n \
      $(BUILD)/chat $(BUILD)/visualize $(BUILD)/markdown $(BUILD)/async $(BUILD)/dragdrop \
-     $(BUILD)/icons $(BUILD)/perf_demo
+     $(BUILD)/icons $(BUILD)/perf_demo $(BUILD)/orrery $(BUILD)/sortlab $(BUILD)/player
 $(BUILD)/gui_demo: examples/gui_demo.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
@@ -88,6 +89,15 @@ $(BUILD)/gui_demo: examples/gui_demo.c $(GUI_BACKEND) $(LIB)
 $(BUILD)/perf_demo: examples/perf_demo.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) -Iexamples/inspect $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/orrery: examples/orrery.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/sortlab: examples/sortlab.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/player: examples/player.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 $(BUILD)/sevenguis: examples/sevenguis.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
