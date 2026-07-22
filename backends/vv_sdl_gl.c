@@ -1311,69 +1311,112 @@ int vv_app_run(const vv_AppDesc *d) {
     vv_set_idle_mode(&ctx, getenv("VV_SHOT") == NULL && d->tick == NULL);
     if (d->clipboard) vv_app_bind_clipboard(app, &ctx);
 
-    // Optional built-in devtools: a node inspector (F12) and perf HUD (F11),
-    // attached as overlays over the app. Both start closed so they cost nothing
-    // until summoned; when open they route the pointer away from the app.
+    // Optional built-in devtools, each in its OWN native OS window: a node
+    // inspector (F12) and a performance HUD (F11). Closed by default; press the
+    // key (or set VV_DEVTOOLS=perf|inspect|all) to open. The multi-window pump
+    // drives them alongside the app.
     vv_Inspector ins; vv_PerfHud hud;
-    bool f12_prev = false, f11_prev = false;
+    vv_App *ins_win = NULL, *hud_win = NULL;
+    bool f12_prev = false, f11_prev = false, want_ins = false, want_hud = false;
     if (d->devtools) {
-        vv_inspect_init(&ins, &ctx, vv_app_measure, app);   ins.open = false;
-        vv_perf_hud_init(&hud, &ctx, vv_app_measure, app);  hud.open = false;
-        // Start an overlay open via env, e.g. VV_DEVTOOLS=perf|inspect|all —
-        // handy for screenshots and "always-on" debugging sessions.
+        vv_inspect_init(&ins, &ctx, vv_app_measure, app);
+        vv_perf_hud_init(&hud, &ctx, vv_app_measure, app);
         const char *dv = getenv("VV_DEVTOOLS");
-        if (dv) {
-            ins.open = strstr(dv, "inspect") || strstr(dv, "all");
-            hud.open = strstr(dv, "perf")    || strstr(dv, "all");
-        }
+        want_ins = dv && (strstr(dv, "inspect") || strstr(dv, "all"));
+        want_hud = dv && (strstr(dv, "perf")    || strstr(dv, "all"));
     }
 
     vv_Color clear = d->clear.a > 0.0f ? d->clear : vv_rgb(0.11f, 0.12f, 0.14f);
-    vv_Input in = {0};
     uint64_t prev = SDL_GetPerformanceCounter();
-    while (vv_app_pump(app, &in)) {
+    while (vv_app_pump_all() > 0) {
+        if (vv_app_should_close(app)) break;
+        if (getenv("VV_SHOT") && vv__shot_done) break; // capture done → exit
         uint64_t now = SDL_GetPerformanceCounter();
         float dt = (float)(now - prev) / (float)SDL_GetPerformanceFrequency();
         prev = now;
         if (dt > 0.1f) dt = 0.1f;
+        bool drew = false;
 
-        int ww, hh; float dpi;
-        vv_app_size(app, &ww, &hh, &dpi);
-        vv_set_window(&ctx, (float)ww, (float)hh, dpi);
-
-        if (d->tick) { d->tick(d->state, dt); vv_invalidate(&ctx); }
-
-        // Devtools toggles + pointer routing. Splits are pass-through when the
-        // overlay is closed, so this is free until F11/F12 is pressed.
-        vv_Input app_in = in;
-        vv_CommandBuffer *ov_ins = NULL, *ov_hud = NULL;
+        // Toggle the devtool windows open/closed (F11/F12 edge, or env at start).
         if (d->devtools) {
             const bool *ks = SDL_GetKeyboardState(NULL);
             bool f12 = ks[SDL_SCANCODE_F12], f11 = ks[SDL_SCANCODE_F11];
-            if (f12 && !f12_prev) vv_inspect_toggle(&ins);
-            if (f11 && !f11_prev) vv_perf_hud_toggle(&hud);
+            if ((f12 && !f12_prev) || want_ins) {
+                want_ins = false;
+                if (ins_win) { vv_app_destroy(ins_win); ins_win = NULL; }
+                else if ((ins_win = vv_app_open_child(app, "Verve \xc2\xb7 Inspector", 400, 720)))
+                    vv_set_measure_fn(&ins.ctx, vv_app_measure, ins_win);
+            }
+            if ((f11 && !f11_prev) || want_hud) {
+                want_hud = false;
+                if (hud_win) { vv_app_destroy(hud_win); hud_win = NULL; }
+                else if ((hud_win = vv_app_open_child(app, "Verve \xc2\xb7 Performance", 380, 640)))
+                    vv_set_measure_fn(&hud.ctx, vv_app_measure, hud_win);
+            }
             f12_prev = f12; f11_prev = f11;
-            app_in = vv_inspect_split(&ins, app_in, (float)ww, (float)hh);
-            app_in = vv_perf_hud_split(&hud, app_in, (float)ww, (float)hh);
         }
 
-        vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, &app_in, d->update, d->view, d->state);
-        if (d->devtools) {
-            ov_ins = vv_inspect_render(&ins, dt, (float)ww, (float)hh, dpi);
-            ov_hud = vv_perf_hud_render(&hud, dt, (float)ww, (float)hh, dpi);
+        // --- main app window ---
+        int ww, hh; float dpi;
+        vv_app_size(app, &ww, &hh, &dpi);
+        vv_set_window(&ctx, (float)ww, (float)hh, dpi);
+        if (d->tick) { d->tick(d->state, dt); vv_invalidate(&ctx); }
+        if (ins_win) vv_invalidate(&ctx); // keep geometry live for the inspector
+        vv_CommandBuffer *cmds = vv_run_frame(&ctx, dt, vv_app_input(app),
+                                              d->update, d->view, d->state);
+        // Outline the inspected node on the app window while the inspector is open.
+        vv_CommandBuffer *ov = NULL;
+        if (ins_win) {
+            ins.hovered = ctx.hovered_id;
+            if (ctx.pressed_id) ins.selected = ctx.pressed_id;
+            ov = vv_inspect_overlay(&ins, dt, (float)ww, (float)hh, dpi);
         }
         vv_app_set_cursor(app, vv_cursor(&ctx));
-        if (cmds || ov_ins || ov_hud) {
+        if (cmds || ov) {
+            drew = true;
             vv_app_frame_begin(app, clear);
-            if (cmds)   vv_render(vv_app_backend(app), cmds, ww, hh, dpi);
-            if (ov_ins) vv_render(vv_app_backend(app), ov_ins, ww, hh, dpi);
-            if (ov_hud) vv_render(vv_app_backend(app), ov_hud, ww, hh, dpi);
+            if (cmds) vv_render(vv_app_backend(app), cmds, ww, hh, dpi);
+            if (ov)   vv_render(vv_app_backend(app), ov, ww, hh, dpi);
             vv_app_frame_end(app);
-        } else {
-            vv_app_wait_event(app, 16); // idle: sleep instead of busy-spinning
         }
+
+        // --- inspector window ---
+        if (ins_win) {
+            if (vv_app_should_close(ins_win)) { vv_app_destroy(ins_win); ins_win = NULL; }
+            else {
+                int cw, ch; float cd; vv_app_size(ins_win, &cw, &ch, &cd);
+                vv_CommandBuffer *ic = vv_inspect_window(&ins, dt, (float)cw, (float)ch,
+                                                         cd, *vv_app_input(ins_win));
+                vv_app_set_cursor(ins_win, vv_cursor(&ins.ctx));
+                if (ic) { drew = true;
+                    vv_app_frame_begin(ins_win, vv_rgb(0.07f, 0.08f, 0.10f));
+                    vv_render(vv_app_backend(ins_win), ic, cw, ch, cd);
+                    vv_app_frame_end(ins_win); }
+            }
+        }
+
+        // --- perf HUD window ---
+        if (hud_win) {
+            if (vv_app_should_close(hud_win)) { vv_app_destroy(hud_win); hud_win = NULL; }
+            else {
+                int cw, ch; float cd; vv_app_size(hud_win, &cw, &ch, &cd);
+                vv_CommandBuffer *hc = vv_perf_hud_window(&hud, dt, dt, (float)cw,
+                                                          (float)ch, cd, *vv_app_input(hud_win));
+                vv_app_set_cursor(hud_win, vv_cursor(&hud.ctx));
+                if (hc) { drew = true;
+                    vv_app_frame_begin(hud_win, vv_rgb(0.06f, 0.07f, 0.09f));
+                    vv_render(vv_app_backend(hud_win), hc, cw, ch, cd);
+                    vv_app_frame_end(hud_win); }
+            }
+        }
+
+        if (!drew) vv_app_wait_event(app, 16); // idle: sleep, don't busy-spin
     }
-    if (d->devtools) { vv_shutdown(&ins.ctx); vv_shutdown(&hud.ctx); }
+    if (d->devtools) {
+        if (ins_win) vv_app_destroy(ins_win);
+        if (hud_win) vv_app_destroy(hud_win);
+        vv_shutdown(&ins.ctx); vv_shutdown(&ins.hi_ctx); vv_shutdown(&hud.ctx);
+    }
     vv_shutdown(&ctx);
     vv_app_destroy(app);
     return 0;

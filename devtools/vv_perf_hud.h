@@ -56,6 +56,7 @@ typedef struct {
   vv_Ctx  ctx;         // the HUD's own context (separate tree)
   vv_Ctx *target;      // the app whose timings we read
   bool    open;
+  bool    windowed;    // rendering into its own native window (fills it)
   int     tab;         // 0 = overview, 1 = phases, 2 = timeline
   float   panel_w;
   float   x, y;        // top-left of the card (window coords)
@@ -98,6 +99,12 @@ vv_Input vv_perf_hud_split(vv_PerfHud *hud, vv_Input raw, float w, float h);
 // overlay and returns its command buffer (NULL when closed). Render it on top.
 vv_CommandBuffer *vv_perf_hud_render(vv_PerfHud *hud, float dt, float w, float h,
                                      float dpi);
+
+// Native-window variant: render the HUD filling its own window (its own
+// vv_Ctx), driven by that window's input `win_in`. `wall_dt` is the app's frame
+// delta (for the FPS/graph cadence), which may differ from this window's dt.
+vv_CommandBuffer *vv_perf_hud_window(vv_PerfHud *hud, float dt, float wall_dt,
+                                     float w, float h, float dpi, vv_Input win_in);
 
 #endif // VV_PERF_HUD_H
 
@@ -386,14 +393,23 @@ static void vvph_view(vv_Ctx *c, void *st) {
   // instrumented (-DVV_PERF) and has run at least one frame.
   bool have_data = hud->target->perf.perf.samples[VV_PERF_FRAME_TOTAL].frames > 0;
 
-  vv_box_keyed(c, "card", 4,
-               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(hud->panel_w),
-                         .has_absolute = true,
-                         .absolute = vv_rect(hud->x, hud->y, hud->panel_w, 0),
-                         .padding = vv_all(14), .gap = 10),
-               VV_STYLE(.bg = vv_rgba(0.06f, 0.07f, 0.09f, 0.96f),
-                        .radius = vv_r(12), .border_width = vv_all(1),
-                        .border_color = t->border));
+  if (hud->windowed)
+    // fills its own native window, edge to edge
+    vv_box_keyed(c, "card", 4,
+                 VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                           .scroll_y = true, .clip = true,
+                           .padding = vv_all(14), .gap = 10),
+                 VV_STYLE(.bg = vv_rgb(0.06f, 0.07f, 0.09f)));
+  else
+    // a floating card docked to the app's top-left
+    vv_box_keyed(c, "card", 4,
+                 VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(hud->panel_w),
+                           .has_absolute = true,
+                           .absolute = vv_rect(hud->x, hud->y, hud->panel_w, 0),
+                           .padding = vv_all(14), .gap = 10),
+                 VV_STYLE(.bg = vv_rgba(0.06f, 0.07f, 0.09f, 0.96f),
+                          .radius = vv_r(12), .border_width = vv_all(1),
+                          .border_color = t->border));
   {
     // title row
     VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
@@ -479,6 +495,15 @@ vv_CommandBuffer *vv_perf_hud_render(vv_PerfHud *hud, float dt, float w, float h
   vv_set_window(&hud->ctx, w, h, dpi);
   vv_invalidate(&hud->ctx); // rebuild every frame to animate the graphs
   return vv_run_frame(&hud->ctx, dt, &hud->ui_in, NULL, vvph_view, hud);
+}
+
+vv_CommandBuffer *vv_perf_hud_window(vv_PerfHud *hud, float dt, float wall_dt,
+                                     float w, float h, float dpi, vv_Input win_in) {
+  hud->windowed = true;
+  vvph_sample(hud, wall_dt);           // measure the app's cadence, not this window's
+  vv_set_window(&hud->ctx, w, h, dpi);
+  vv_invalidate(&hud->ctx);
+  return vv_run_frame(&hud->ctx, dt, &win_in, NULL, vvph_view, hud);
 }
 
 #endif // VV_PERF_HUD_IMPL

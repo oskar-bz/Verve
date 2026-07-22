@@ -45,11 +45,13 @@ typedef vv_Vec2 (*vv_MeasureFn)(void *ud, const char *s, int len, vv_FontID font
 #endif
 
 typedef struct {
-  vv_Ctx  ctx;        // the inspector's own context (separate tree)
+  vv_Ctx  ctx;        // the inspector's own context (the panel tree)
+  vv_Ctx  hi_ctx;     // a second context: highlight overlay on the app window
   vv_Ctx *target;     // the app under inspection
   vv_ID   selected;   // node pinned in the panel (0 = none)
   vv_ID   hovered;    // node under the cursor in the app
   bool    open;
+  bool    windowed;   // rendering into its own native window (fills it)
   float   panel_w;
 
   // scratch carried between split() and render() within a frame
@@ -73,6 +75,19 @@ vv_Input vv_inspect_split(vv_Inspector *ins, vv_Input raw, float w, float h);
 // command buffer (NULL when closed). Render it on top of your app's buffer.
 vv_CommandBuffer *vv_inspect_render(vv_Inspector *ins, float dt, float w,
                                     float h, float dpi);
+
+// Native-window variant: render the inspector panel filling its own window
+// (its own vv_Ctx), driven by that window's input `win_in`. Selection follows
+// clicks on tree rows and on nodes in the app (via the shared target's
+// pressed_id). Pair with vv_inspect_overlay to outline the node on the app.
+vv_CommandBuffer *vv_inspect_window(vv_Inspector *ins, float dt, float w,
+                                    float h, float dpi, vv_Input win_in);
+
+// The selected/hovered-node outline, sized to the *app* window (w,h,dpi) — draw
+// it on top of the app's own frame while the inspector window is open. Returns
+// NULL when nothing is selected/hovered.
+vv_CommandBuffer *vv_inspect_overlay(vv_Inspector *ins, float dt, float w,
+                                     float h, float dpi);
 
 #endif // VV_INSPECT_H
 
@@ -193,31 +208,75 @@ static void vvi_properties(vv_Ctx *c, vv_Inspector *ins) {
   vvi_prop(c, "set", b[0] ? b : "\xe2\x80\x94");
 }
 
+// Title + tree + properties — the panel's inner content, shared by the docked
+// overlay and the native-window layouts.
+static void vvi_panel_body(vv_Ctx *c, vv_Inspector *ins) {
+  const vv_Theme *t = vv_theme();
+  vv_text(c, "Inspector", VV_STYLE(.fg = t->text, .font_size = 18));
+  vv_text(c, "hover/click the app or a row",
+          VV_STYLE(.fg = t->text_muted, .font_size = 12));
+  vv_box_keyed(c, "tree", 4,
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                         .scroll_y = true, .clip = true, .gap = 1,
+                         .padding = vv_all(4)),
+               VV_STYLE(.bg = vv_rgb(0.10f, 0.11f, 0.14f), .radius = vv_r(8)));
+  vvi_tree_rows(c, ins, ins->target->root, 0);
+  vv_end_box(c);
+  vv_box_keyed(c, "props", 5,
+               VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_fixed(300),
+                         .scroll_y = true, .clip = true, .gap = 5,
+                         .padding = vv_all(10)),
+               VV_STYLE(.bg = vv_rgb(0.10f, 0.11f, 0.14f), .radius = vv_r(8)));
+  vvi_properties(c, ins);
+  vv_end_box(c);
+}
+
+// The selected/hovered node outlines, in app-window coordinates.
+static void vvi_highlights(vv_Ctx *c, vv_Inspector *ins) {
+  const vv_Theme *t = vv_theme();
+  uint32_t si = vv_pool_find(&ins->target->pool, ins->selected);
+  if (si != VV_NIL) {
+    vv_Rect r = vv_pool_get(&ins->target->pool, si)->actual_rect;
+    vv_box_keyed(c, "hi", 2, VV_LAYOUT(.has_absolute = true, .absolute = r),
+                 VV_STYLE(.bg = vv_rgba(0.22f, 0.55f, 0.95f, 0.12f),
+                          .border_width = vv_all(2), .border_color = t->accent_hi));
+    vv_end_box(c);
+  }
+  uint32_t hi = vv_pool_find(&ins->target->pool, ins->hovered);
+  if (hi != VV_NIL && ins->hovered != ins->selected) {
+    vv_Rect r = vv_pool_get(&ins->target->pool, hi)->actual_rect;
+    vv_box_keyed(c, "hh", 2, VV_LAYOUT(.has_absolute = true, .absolute = r),
+                 VV_STYLE(.border_width = vv_all(1),
+                          .border_color = vv_rgba(1, 1, 1, 0.35f)));
+    vv_end_box(c);
+  }
+}
+
+// Highlight-only view (for the second context / app window).
+static void vvi_hi_view(vv_Ctx *c, void *st) {
+  vv_Inspector *ins = st;
+  VV_BOX(c, VV_LAYOUT(.w = vv_grow(1), .h = vv_grow(1)), VV_STYLE(.bg = {0}))
+    vvi_highlights(c, ins);
+}
+
 static void vvi_view(vv_Ctx *c, void *st) {
   vv_Inspector *ins = st;
   const vv_Theme *t = vv_theme();
 
-  VV_BOX(c, VV_LAYOUT(.w = vv_grow(1), .h = vv_grow(1)), VV_STYLE(.bg = {0})) {
-    // selected-node highlight over the app canvas (absolute = window coords)
-    uint32_t si = vv_pool_find(&ins->target->pool, ins->selected);
-    if (si != VV_NIL) {
-      vv_Rect r = vv_pool_get(&ins->target->pool, si)->actual_rect;
-      vv_box_keyed(c, "hi", 2,
-                   VV_LAYOUT(.has_absolute = true, .absolute = r),
-                   VV_STYLE(.bg = vv_rgba(0.22f, 0.55f, 0.95f, 0.12f),
-                            .border_width = vv_all(2), .border_color = t->accent_hi));
-      vv_end_box(c);
+  // Native window: the panel fills its own window (highlights go on the app
+  // window via vv_inspect_overlay).
+  if (ins->windowed) {
+    VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
+                        .padding = vv_all(14), .gap = 10),
+           VV_STYLE(.bg = vv_rgb(0.07f, 0.08f, 0.10f))) {
+      vvi_panel_body(c, ins);
     }
-    uint32_t hi = vv_pool_find(&ins->target->pool, ins->hovered);
-    if (hi != VV_NIL && ins->hovered != ins->selected) {
-      vv_Rect r = vv_pool_get(&ins->target->pool, hi)->actual_rect;
-      vv_box_keyed(c, "hh", 2, VV_LAYOUT(.has_absolute = true, .absolute = r),
-                   VV_STYLE(.border_width = vv_all(1),
-                            .border_color = vv_rgba(1, 1, 1, 0.35f)));
-      vv_end_box(c);
-    }
+    return;
+  }
 
-    // the panel, pinned to the right edge
+  // Overlay: highlights over the app + the panel docked right.
+  VV_BOX(c, VV_LAYOUT(.w = vv_grow(1), .h = vv_grow(1)), VV_STYLE(.bg = {0})) {
+    vvi_highlights(c, ins);
     vv_box_keyed(c, "panel", 5,
                  VV_LAYOUT(.dir = VV_COLUMN, .w = vv_fixed(ins->panel_w),
                            .has_absolute = true,
@@ -227,25 +286,7 @@ static void vvi_view(vv_Ctx *c, void *st) {
                  VV_STYLE(.bg = vv_rgb(0.07f, 0.08f, 0.10f),
                           .border_width = (vv_Edges){1, 0, 0, 0},
                           .border_color = t->border));
-    {
-      vv_text(c, "Inspector", VV_STYLE(.fg = t->text, .font_size = 18));
-      vv_text(c, "hover/click the app or a row",
-              VV_STYLE(.fg = t->text_muted, .font_size = 12));
-      vv_box_keyed(c, "tree", 4,
-                   VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_grow(1),
-                             .scroll_y = true, .clip = true, .gap = 1,
-                             .padding = vv_all(4)),
-                   VV_STYLE(.bg = vv_rgb(0.10f, 0.11f, 0.14f), .radius = vv_r(8)));
-      vvi_tree_rows(c, ins, ins->target->root, 0);
-      vv_end_box(c);
-      vv_box_keyed(c, "props", 5,
-                   VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .h = vv_fixed(300),
-                             .scroll_y = true, .clip = true, .gap = 5,
-                             .padding = vv_all(10)),
-                   VV_STYLE(.bg = vv_rgb(0.10f, 0.11f, 0.14f), .radius = vv_r(8)));
-      vvi_properties(c, ins);
-      vv_end_box(c);
-    }
+    vvi_panel_body(c, ins);
     vv_end_box(c);
   }
 }
@@ -258,6 +299,8 @@ void vv_inspect_init(vv_Inspector *ins, vv_Ctx *target, vv_MeasureFn measure,
   ins->panel_w = 380.0f;
   vv_init(&ins->ctx);
   vv_set_measure_fn(&ins->ctx, measure, ud);
+  vv_init(&ins->hi_ctx);
+  vv_set_measure_fn(&ins->hi_ctx, measure, ud);
 }
 
 void vv_inspect_toggle(vv_Inspector *ins) { ins->open = !ins->open; }
@@ -292,6 +335,30 @@ vv_CommandBuffer *vv_inspect_render(vv_Inspector *ins, float dt, float w,
   vv_set_window(&ins->ctx, w, h, dpi);
   vv_invalidate(&ins->ctx); // rebuild every frame to track the app
   return vv_run_frame(&ins->ctx, dt, &ins->ui_in, NULL, vvi_view, ins);
+}
+
+vv_CommandBuffer *vv_inspect_window(vv_Inspector *ins, float dt, float w,
+                                    float h, float dpi, vv_Input win_in) {
+  ins->windowed = true;
+  // Selection/hover follow the shared target: hovering or clicking a node in
+  // the app window updates it, and the inspector window reflects it live.
+  ins->hovered = ins->target->hovered_id;
+  if (ins->target->pressed_id) ins->selected = ins->target->pressed_id;
+  vv_invalidate(ins->target); // keep the app tree fresh for cross-window reads
+  vv_set_window(&ins->ctx, w, h, dpi);
+  vv_invalidate(&ins->ctx);
+  return vv_run_frame(&ins->ctx, dt, &win_in, NULL, vvi_view, ins);
+}
+
+vv_CommandBuffer *vv_inspect_overlay(vv_Inspector *ins, float dt, float w,
+                                     float h, float dpi) {
+  if (vv_pool_find(&ins->target->pool, ins->selected) == VV_NIL &&
+      vv_pool_find(&ins->target->pool, ins->hovered) == VV_NIL)
+    return NULL;
+  vv_set_window(&ins->hi_ctx, w, h, dpi);
+  vv_invalidate(&ins->hi_ctx);
+  vv_Input none = { .mouse = vv_v2(-1, -1) };
+  return vv_run_frame(&ins->hi_ctx, dt, &none, NULL, vvi_hi_view, ins);
 }
 
 #endif // VV_INSPECT_IMPL
