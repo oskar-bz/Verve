@@ -67,14 +67,16 @@ static void accumulate(vv_Ctx *ctx, vv_PerfPhaseID id, uint64_t delta_ns) {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — single-call design: vv_perf_start does all timing.
-// vv_perf_end is a no-op (included for API symmetry with potential future use).
+// Public API — paired start/end bracketing. vv_perf_start stamps the phase's
+// open time; vv_perf_end closes it and accumulates the elapsed span into that
+// phase's sample. Brackets nest freely (each phase keeps its own timestamp), so
+// a parent phase (LAYOUT, PRESENT) that wraps its sub-phases is timed in full,
+// independently of the children — no manual roll-up needed.
 // ---------------------------------------------------------------------------
 
 void vv_perf_init(vv_Ctx *ctx) {
     memset(&ctx->perf, 0, sizeof(ctx->perf));
     ctx->perf.active = true;
-    ctx->perf.perf.frame_start_ns = perf_now_ns();
 }
 
 void vv_perf_print(const vv_Ctx *ctx) {
@@ -154,33 +156,24 @@ void vv_perf_print(const vv_Ctx *ctx) {
 
 void vv_perf_reset(vv_Ctx *ctx) {
     memset(ctx->perf.perf.samples, 0, sizeof(ctx->perf.perf.samples));
+    memset(ctx->perf.perf.start_ns, 0, sizeof(ctx->perf.perf.start_ns));
     ctx->perf.perf.tier_build = 0;
     ctx->perf.perf.tier_present = 0;
     ctx->perf.perf.tier_idle = 0;
-    ctx->perf.perf.frame_start_ns = 0;
 }
 
 void vv_perf_start(vv_Ctx *ctx, vv_PerfPhaseID id) {
-    uint64_t end = perf_now_ns();
-    uint64_t start = ctx->perf.perf.frame_start_ns;
-    if (start == 0) start = end;
-
-    uint64_t delta = (end >= start) ? (end - start) : 0;
-    accumulate(ctx, id, delta);
-
-    // Accumulate into parent phase.
-    if (is_child_phase(id)) {
-        if (id >= VV_PERF_LAYOUT_P1 && id <= VV_PERF_LAYOUT_P4)
-            accumulate(ctx, VV_PERF_LAYOUT, delta);
-        else if (id >= VV_PERF_PRESENT_STYLE && id <= VV_PERF_PRESENT_EXITING)
-            accumulate(ctx, VV_PERF_PRESENT, delta);
-    }
-
-    ctx->perf.perf.frame_start_ns = end;
+    assert((int)id < VV_PERF_COUNT);
+    ctx->perf.perf.start_ns[id] = perf_now_ns();
 }
 
 void vv_perf_end(vv_Ctx *ctx, vv_PerfPhaseID id) {
-    (void)ctx; (void)id;
+    assert((int)id < VV_PERF_COUNT);
+    uint64_t start = ctx->perf.perf.start_ns[id];
+    if (start == 0) return;             // _end without a matching _start
+    uint64_t end = perf_now_ns();
+    accumulate(ctx, id, end >= start ? end - start : 0);
+    ctx->perf.perf.start_ns[id] = 0;
 }
 
 void vv_perf_count(vv_Ctx *ctx, vv_PerfPhaseID id) {

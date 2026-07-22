@@ -446,7 +446,6 @@ vv_CommandBuffer *vv_end_frame(vv_Ctx *ctx) {
 // and re-emit the existing tree. Used when nothing changed but animations are
 // still running (§4.2). The frame arena is untouched, so node text stays valid.
 static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
-    VV_PERF_START(ctx, VV_PERF_FRAME_TOTAL);
     ctx->unsettled_springs = 0;
     ctx->unsettled_rects = 0;
     VV_PERF_START(ctx, VV_PERF_PRESENT);
@@ -460,6 +459,10 @@ static vv_CommandBuffer *present_only(vv_Ctx *ctx) {
 
 vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
                                vv_UpdateFn update, vv_ViewFn view, void *state) {
+    // Bracket the whole frame here (run_frame drives build_begin/end directly,
+    // bypassing vv_begin_frame). Closed by vv_end_frame, present_only, or the
+    // idle branch below — every path ends the span exactly once.
+    VV_PERF_START(ctx, VV_PERF_FRAME_TOTAL);
     input_step(ctx, dt, input);
 
     // Drain messages emitted by the previous view(). Value-bound widgets emit
@@ -493,6 +496,7 @@ vv_CommandBuffer *vv_run_frame(vv_Ctx *ctx, float dt, const vv_Input *input,
     if (ctx->idle_mode && ctx->unsettled_springs == 0) {
         ctx->last_tier = VV_TIER_IDLE;
         ctx->perf.perf.tier_idle++;
+        VV_PERF_END(ctx, VV_PERF_FRAME_TOTAL);
         return NULL;
     }
     return present_only(ctx);

@@ -1,0 +1,29 @@
+# clangd configuration for Verve.
+#
+# The project builds several translation-unit families with different include
+# sets (see the Makefile): the core lib (-Iinclude), the SDL/GL backend and the
+# windowed examples (also -Ibackends -Ivendor), the drop-in overlays under
+# examples/inspect, and the optional craz vector demos (-I../craz/include).
+# clangd compiles each file in isolation, so we give it the union of those paths
+# plus -DVV_PERF, which keeps the performance-instrumentation branches live for
+# analysis (they compile out of real builds unless VV_PERF is set).
+CompileFlags:
+  Compiler: clang
+  Add:
+    - -std=c11
+    - -Iinclude
+    - -Ibackends
+    - -Ivendor
+    - -Iexamples/inspect
+    - -I../craz/include
+    - -DVV_PERF
+    - -Wall
+    - -Wextra
+  # stb (vendor/) and the generated deps are noisy; don't fail the file on them.
+  Remove:
+    - -Wconversion
+    - -Wshadow
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None

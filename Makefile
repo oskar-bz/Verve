@@ -17,8 +17,11 @@ LIB      := $(BUILD)/libverve.a
 TEST_SRC := $(wildcard tests/*.c)
 TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 
-# Headless examples build with the generic rule; windowed demos need SDL3.
-DEMO_SRC := $(filter-out examples/gui_demo.c examples/sevenguis.c,$(wildcard examples/*.c))
+# Headless examples build with the generic rule; windowed demos need SDL3, and
+# the craz vector demos (icons, svgview) additionally need ../craz — so those
+# are excluded here and get their own rules below.
+DEMO_SRC := $(filter-out examples/gui_demo.c examples/sevenguis.c \
+                         examples/icons.c examples/svgview.c,$(wildcard examples/*.c))
 DEMO_BIN := $(patsubst examples/%.c,$(BUILD)/%,$(DEMO_SRC))
 
 # SDL3 + OpenGL backend (libepoxy loader) + stb_truetype (vendored).
@@ -28,7 +31,16 @@ GUI_CFLAGS := -std=c11 -Iinclude -Ibackends -Ivendor -Wall -Wextra -g -O2 \
               $(shell pkg-config --cflags sdl3)
 GUI_LIBS   := $(shell pkg-config --libs sdl3) -lepoxy -lGL
 
-.PHONY: all lib test demo gui clean
+# craz CPU vector rasterizer (sibling checkout) — a build-time dependency of the
+# vector demos only (icons, svgview). Built on demand via its own Makefile. Note:
+# these demos also need the craz-integrated GL backend + backends/vv_vector.{c,h}
+# (the vv_app_vector path); if that module is absent the demos won't link.
+CRAZ_DIR    := ../craz
+CRAZ_LIB    := $(CRAZ_DIR)/libcraz.a
+CRAZ_CFLAGS := -I$(CRAZ_DIR)/include
+VV_VECTOR   := $(wildcard backends/vv_vector.c)
+
+.PHONY: all lib test demo gui vector icons svgview clean
 all: lib test demo
 
 lib: $(LIB)
@@ -59,7 +71,28 @@ gui: $(BUILD)/gui_demo $(BUILD)/sevenguis $(BUILD)/mycounter $(BUILD)/kanban \
      $(BUILD)/palette $(BUILD)/habit $(BUILD)/inspector $(BUILD)/transitions \
      $(BUILD)/table $(BUILD)/finder $(BUILD)/playground $(BUILD)/bindings \
      $(BUILD)/showcase $(BUILD)/theme_editor $(BUILD)/panels $(BUILD)/dates $(BUILD)/gallery $(BUILD)/i18n \
-     $(BUILD)/chat $(BUILD)/visualize $(BUILD)/markdown $(BUILD)/async $(BUILD)/dragdrop
+     $(BUILD)/chat $(BUILD)/visualize $(BUILD)/markdown $(BUILD)/async $(BUILD)/dragdrop \
+     $(BUILD)/perf_demo
+# perf_demo links the drop-in HUD (examples/inspect/vv_perf_hud.h). PERF_CFLAGS
+# governs both the core objects and this TU, so `make VV_PERF=1 perf_demo`
+# instruments everything; a plain build still runs (the panel says how to enable).
+$(BUILD)/perf_demo: examples/perf_demo.c backends/vv_sdl_gl.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) -Iexamples/inspect $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+# craz vector demos. `make vector` (or icons/svgview) builds them. They link the
+# GL backend + the vv_vector module + libcraz; $(CRAZ_LIB) is built on demand.
+vector: icons svgview
+icons:   $(BUILD)/icons
+svgview: $(BUILD)/svgview
+$(CRAZ_LIB):
+	$(MAKE) -C $(CRAZ_DIR)
+$(BUILD)/icons: examples/icons.c backends/vv_sdl_gl.c $(VV_VECTOR) $(LIB) $(CRAZ_LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $(CRAZ_CFLAGS) $(filter %.c %.a,$^) $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+$(BUILD)/svgview: examples/svgview.c backends/vv_sdl_gl.c $(VV_VECTOR) $(LIB) $(CRAZ_LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $(CRAZ_CFLAGS) $(filter %.c %.a,$^) $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+
 $(BUILD)/gui_demo: examples/gui_demo.c backends/vv_sdl_gl.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@

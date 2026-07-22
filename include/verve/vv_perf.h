@@ -68,10 +68,10 @@ typedef struct {
 
 typedef struct vv_PerfCtx {
     vv_PerfSample samples[VV_PERF_COUNT];
+    uint64_t start_ns[VV_PERF_COUNT];  // open timestamp per phase (set by _start)
     uint64_t tier_build;
     uint64_t tier_present;
     uint64_t tier_idle;
-    uint64_t frame_start_ns;
 } vv_PerfCtx;
 
 // ---------------------------------------------------------------------------
