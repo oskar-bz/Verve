@@ -209,12 +209,20 @@ $(BUILD)/hotdemo: examples/hot/host.c $(GUI_BACKEND) $(LIB) $(BUILD)/hotview.so
 # ---- starter templates -----------------------------------------------------
 # A normal minimal app (one vv_app_run call) and a hot-reloadable app (host +
 # swappable view .so via vv_hot_run). Copy templates/ to start a new project.
-.PHONY: templates template-minimal template-hot template-hot-view
-templates: template-minimal template-hot
+.PHONY: templates template-minimal template-anim template-devtools template-hot template-hot-view
+templates: template-minimal template-anim template-devtools template-hot
 
 # Minimal single-file app.
 template-minimal: $(BUILD)/tpl_minimal
 $(BUILD)/tpl_minimal: templates/minimal.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+template-anim: $(BUILD)/tpl_anim
+$(BUILD)/tpl_anim: templates/anim.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+template-devtools: $(BUILD)/tpl_devtools
+$(BUILD)/tpl_devtools: templates/devtools.c $(GUI_BACKEND) $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
 
@@ -229,6 +237,60 @@ $(BUILD)/tpl_hotdemo: templates/hot/host.c $(GUI_BACKEND) backends/vv_hot.c $(LI
 	@mkdir -p $(BUILD)
 	$(CC) $(GUI_CFLAGS) -Itemplates/hot templates/hot/host.c $(GUI_BACKEND) backends/vv_hot.c $(LIB) \
 		$(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -ldl -o $@
+
+# ---- scaffolding: make new NAME=<name> [KIND=basic|anim|devtools|hot] -------
+# Generate a ready-to-build app in apps/ from a template, then `make run`.
+KIND ?= basic
+APP  ?=
+.PHONY: new run run-hot hot-view help
+new:
+	@test -n "$(NAME)" || { echo "usage: make new NAME=<name> [KIND=basic|anim|devtools|hot]"; exit 2; }
+	@mkdir -p apps; kind="$(KIND)"; \
+	 if [ "$$kind" = hot ]; then \
+	   test ! -e "apps/$(NAME)" || { echo "apps/$(NAME) already exists"; exit 1; }; \
+	   cp -r templates/hot "apps/$(NAME)"; \
+	   echo "created apps/$(NAME)/  (hot-reload host + view)"; \
+	   echo "run:   make run-hot APP=$(NAME)"; \
+	   echo "edit:  apps/$(NAME)/view.c  then  make hot-view APP=$(NAME)  (live reload)"; \
+	 else \
+	   src="templates/$$kind.c"; [ "$$kind" = basic ] && src="templates/minimal.c"; \
+	   test -f "$$src" || { echo "unknown KIND=$$kind (basic|anim|devtools|hot)"; exit 1; }; \
+	   test ! -e "apps/$(NAME).c" || { echo "apps/$(NAME).c already exists"; exit 1; }; \
+	   sed 's/\.title[[:space:]]*=[[:space:]]*"[^"]*"/.title = "$(NAME)"/' "$$src" > "apps/$(NAME).c"; \
+	   echo "created apps/$(NAME).c"; echo "build+run:  make run APP=$(NAME)"; \
+	 fi
+
+# Any apps/<name>.c is a full turn-key app (GUI backend + built-in devtools).
+$(BUILD)/%: apps/%.c $(GUI_BACKEND) $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) $^ $(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -o $@
+run:
+	@test -n "$(APP)" || { echo "usage: make run APP=<name>"; exit 2; }
+	@$(MAKE) $(BUILD)/$(APP) && ./$(BUILD)/$(APP)
+
+# Hot-reload app in apps/<name>/: run the host, then rebuild just the view .so.
+$(BUILD)/%_view.so: apps/%/view.c $(LIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) -Iapps/$* -fPIC -shared $< $(LIB) $(LDLIBS) -o $@
+$(BUILD)/%_host: apps/%/host.c $(GUI_BACKEND) backends/vv_hot.c $(LIB) $(BUILD)/%_view.so
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) -Iapps/$* apps/$*/host.c $(GUI_BACKEND) backends/vv_hot.c $(LIB) \
+		$(LDFLAGS) $(GUI_LIBS) $(LDLIBS) -ldl -o $@
+run-hot:
+	@test -n "$(APP)" || { echo "usage: make run-hot APP=<name>"; exit 2; }
+	@$(MAKE) $(BUILD)/$(APP)_host && ./$(BUILD)/$(APP)_host
+hot-view:
+	@test -n "$(APP)" || { echo "usage: make hot-view APP=<name>"; exit 2; }
+	@$(MAKE) $(BUILD)/$(APP)_view.so && echo "reloaded apps/$(APP)/view.c"
+
+help:
+	@echo "Verve - common targets:"
+	@echo "  make lib | test | gui         build the library / tests / all GUI demos"
+	@echo "  make new NAME=<n> [KIND=basic|anim|devtools|hot]   scaffold a new app in apps/"
+	@echo "  make run APP=<n>              build and run apps/<n>.c"
+	@echo "  make run-hot APP=<n>          run a hot-reload app;  make hot-view APP=<n> to reload"
+	@echo "  VV_PERF=1 make run APP=<n>    build instrumented (F11 = perf HUD, F12 = inspector)"
+	@echo "  make <demo>                  e.g. orrery, sortlab, player, perf_demo, icons, svgview"
 
 test: $(TEST_BIN)
 	@echo "== running tests =="
