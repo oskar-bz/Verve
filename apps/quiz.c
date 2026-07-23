@@ -295,8 +295,11 @@ static void view(vv_Ctx *c, void *state) {
                     vv_text(c, vv_fmt(c, "%d / %d", g->index + 1, g->count),
                             VV_STYLE(.fg = TH->text_muted, .font_size = TH->font_size - 1));
                 }
-                vv_text(c, q->question,
-                        VV_STYLE(.fg = TH->text_primary, .font_size = TH->font_size + 6));
+                // vv_rich_text is the paragraph widget that wraps to its
+                // container width (plain vv_text is single-line). Keyed per
+                // question so it rebuilds as we advance.
+                vv_Span qspan[1] = {{ q->question, TH->text_primary, TH->font_size + 6, 0 }};
+                vv_rich_text(c, vv_fmt(c, "q%d", g->index), qspan, 1);
 
                 VV_BOX(c, VV_LAYOUT(.dir = VV_COLUMN, .w = vv_grow(1), .gap = 8),
                        VV_STYLE(.bg = {0})) {
