@@ -293,7 +293,7 @@ new:
 # archive + libcurl/yyjson. Explicit rule wins over the generic apps rule below.
 $(BUILD)/quiz: apps/quiz.c $(GUI_BACKEND) $(LIB) $(NETLIB)
 	@mkdir -p $(BUILD)
-	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) apps/quiz.c $(GUI_BACKEND) $(LIB) $(NETLIB) \
+	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) apps/quiz.c $(GUI_BACKEND) $(NETLIB) $(LIB) \
 		$(LDFLAGS) $(GUI_LIBS) $(NET_LIBS) $(LDLIBS) -o $@
 
 # Any apps/<name>.c is a full turn-key app (GUI backend + built-in devtools).

@@ -230,14 +230,13 @@ static void answer_result(vv_Ctx *c, Game *g, int i, const char *text) {
     bool is_correct = (i == q->correct);
     bool is_picked  = (i == g->picked);
     vv_Color bg = TH->control_bg_rest, fg = TH->text_secondary;
-    const char *mark = "";
-    if (is_correct)      { bg = TH->status_success; fg = TH->text_on_brand; mark = "  \xe2\x9c\x93"; }
-    else if (is_picked)  { bg = TH->status_error;   fg = TH->text_on_brand; mark = "  \xe2\x9c\x97"; }
+    if (is_correct)      { bg = TH->status_success; fg = TH->text_on_brand; }
+    else if (is_picked)  { bg = TH->status_error;   fg = TH->text_on_brand; }
 
     VV_BOX(c, VV_LAYOUT(.dir = VV_ROW, .w = vv_grow(1), .cross = VV_ALIGN_CENTER,
                         .padding = vv_hv(14, 12), .gap = 6),
            VV_STYLE(.bg = bg, .radius = vv_r(TH->radius_md))) {
-        vv_text(c, vv_fmt(c, "%c.  %s%s", 'A' + i, text, mark),
+        vv_text(c, vv_fmt(c, "%c.  %s", 'A' + i, text),
                 VV_STYLE(.fg = fg, .font_size = TH->font_size));
     }
 }
@@ -357,12 +356,17 @@ int main(void) {
 
     vv_Ctx ctx; vv_init(&ctx);
     vv_set_measure_fn(&ctx, vv_app_measure, app);
-    vv_set_idle_mode(&ctx, true);
+    // VV_SHOT=<png> captures a frame headlessly (dev/CI). While capturing we
+    // keep rendering (no idle) and auto-start a round so the shot lands on a
+    // real question instead of the idle menu.
+    bool shot = getenv("VV_SHOT") != NULL;
+    vv_set_idle_mode(&ctx, !shot);
     TH = vv_theme();
 
     vv_NetConfig cfg = vv_net_config_default();
     Game game = { .net = vv_net_create(&cfg), .ctx = &ctx, .picked = -1 };
     if (!game.net) { vv_app_destroy(app); return 1; }
+    if (shot) vv_emit(&ctx, MSG_START, VV_NO_PAYLOAD);
 
     vv_Input in = {0};
     uint64_t prev = SDL_GetPerformanceCounter();
