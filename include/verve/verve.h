@@ -16,6 +16,7 @@
 #include "vv_id.h"       // IWYU pragma: export
 #include "vv_internal.h" // IWYU pragma: export
 #include "vv_layout.h"   // IWYU pragma: export
+#include "vv_net.h"      // IWYU pragma: export
 #include "vv_node.h"     // IWYU pragma: export
 #include "vv_str.h"      // IWYU pragma: export
 #include "vv_style.h"    // IWYU pragma: export
