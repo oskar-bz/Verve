@@ -13,18 +13,32 @@ LDLIBS   ?= -lm -lpthread
 PERF_CFLAGS := $(if $(VV_PERF),-DVV_PERF,)
 
 BUILD    := build
-SRC      := $(wildcard src/*.c)
+
+# Core library: everything under src/ EXCEPT the optional network module. The
+# core must stay free of libcurl/yyjson so non-networking apps don't acquire
+# those dependencies (networking.md §5.3).
+NET_SRC  := src/vv_net.c
+SRC      := $(filter-out $(NET_SRC),$(wildcard src/*.c))
 OBJ      := $(patsubst src/%.c,$(BUILD)/%.o,$(SRC))
 LIB      := $(BUILD)/libverve.a
 
+# Optional network archive: applications link it alongside libverve.a together
+# with libcurl + yyjson (NET_LIBS). Kept a separate .a so `make lib` and the
+# core tests never pull in a TLS/HTTP/JSON dependency.
+NET_OBJ  := $(patsubst src/%.c,$(BUILD)/%.o,$(NET_SRC))
+NETLIB   := $(BUILD)/libverve-net.a
+NET_LIBS := $(shell pkg-config --libs libcurl yyjson)
+
+# test_net links the network archive; every other test is core-only.
 TEST_SRC := $(wildcard tests/*.c)
 TEST_BIN := $(patsubst tests/%.c,$(BUILD)/%,$(TEST_SRC))
 
-# Headless examples build with the generic rule; windowed demos need SDL3 (and
-# the craz demos need ../craz). Those all get their own explicit GUI rules below.
+# trivia is a headless networking example (libcurl + yyjson), built via an
+# explicit net rule below — keep it out of the generic core-only example list.
 DEMO_SRC := $(filter-out examples/gui_demo.c examples/sevenguis.c \
                          examples/icons.c examples/svgview.c examples/perf_demo.c \
-                         examples/orrery.c examples/sortlab.c examples/player.c,\
+                         examples/orrery.c examples/sortlab.c examples/player.c \
+                         examples/trivia.c,\
                          $(wildcard examples/*.c))
 DEMO_BIN := $(patsubst examples/%.c,$(BUILD)/%,$(DEMO_SRC))
 
@@ -47,12 +61,17 @@ GUI_BACKEND := backends/vv_sdl_gl.c backends/vv_vector.c
 $(CRAZ_LIB):
 	$(MAKE) -C $(CRAZ_DIR)
 
-.PHONY: all lib test demo gui clean
-all: lib test demo
+.PHONY: all lib net test demo gui clean
+all: lib net test demo
 
 lib: $(LIB)
+net: $(NETLIB)
 
 $(LIB): $(OBJ)
+	@mkdir -p $(BUILD)
+	ar rcs $@ $^
+
+$(NETLIB): $(NET_OBJ)
 	@mkdir -p $(BUILD)
 	ar rcs $@ $^
 
@@ -60,7 +79,17 @@ $(BUILD)/%.o: src/%.c
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $(DEPFLAGS) $(PERF_CFLAGS) -c $< -o $@
 
--include $(OBJ:.o=.d)
+-include $(OBJ:.o=.d) $(NET_OBJ:.o=.d)
+
+# Explicit net-aware rules. These must precede the generic tests/examples
+# pattern rules so make prefers them for the networking targets.
+$(BUILD)/test_net: tests/test_net.c $(LIB) $(NETLIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $< $(NETLIB) $(LIB) $(LDFLAGS) $(NET_LIBS) $(LDLIBS) -o $@
+
+$(BUILD)/trivia: examples/trivia.c $(LIB) $(NETLIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) $< $(NETLIB) $(LIB) $(LDFLAGS) $(NET_LIBS) $(LDLIBS) -o $@
 
 $(BUILD)/%: tests/%.c $(LIB)
 	@mkdir -p $(BUILD)
@@ -70,7 +99,7 @@ $(BUILD)/%: examples/%.c $(LIB)
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) $< $(LIB) $(LDFLAGS) $(LDLIBS) -o $@
 
-demo: $(DEMO_BIN)
+demo: $(DEMO_BIN) $(BUILD)/trivia
 
 # Windowed examples share the SDL3/GL backend build (explicit, not pattern, to
 # avoid clashing with the headless examples rule).
@@ -259,6 +288,13 @@ new:
 	   sed 's/\.title[[:space:]]*=[[:space:]]*"[^"]*"/.title = "$(NAME)"/' "$$src" > "apps/$(NAME).c"; \
 	   echo "created apps/$(NAME).c"; echo "build+run:  make run APP=$(NAME)"; \
 	 fi
+
+# The quiz app also uses the optional network module, so it links the net
+# archive + libcurl/yyjson. Explicit rule wins over the generic apps rule below.
+$(BUILD)/quiz: apps/quiz.c $(GUI_BACKEND) $(LIB) $(NETLIB)
+	@mkdir -p $(BUILD)
+	$(CC) $(GUI_CFLAGS) $(PERF_CFLAGS) apps/quiz.c $(GUI_BACKEND) $(NETLIB) $(LIB) \
+		$(LDFLAGS) $(GUI_LIBS) $(NET_LIBS) $(LDLIBS) -o $@
 
 # Any apps/<name>.c is a full turn-key app (GUI backend + built-in devtools).
 $(BUILD)/%: apps/%.c $(GUI_BACKEND) $(LIB)
